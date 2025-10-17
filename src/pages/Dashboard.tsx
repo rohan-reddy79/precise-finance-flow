@@ -8,11 +8,14 @@ import { toast } from "sonner";
 import { Upload, FileText, TrendingUp, LogOut, PieChart } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
 
 const Dashboard = () => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [statements, setStatements] = useState<any[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -78,16 +81,72 @@ const Dashboard = () => {
 
     if (!allowedTypes.includes(file.type)) {
       toast.error("Please upload a PDF, CSV, or XLSX file");
+      e.target.value = ""; // Reset input
       return;
     }
 
     if (file.size > 20 * 1024 * 1024) {
       toast.error("File size must be less than 20MB");
+      e.target.value = ""; // Reset input
       return;
     }
 
-    toast.success("File uploaded! Processing will be available soon.");
-    // TODO: Implement file processing
+    if (!user) {
+      toast.error("You must be logged in to upload files");
+      return;
+    }
+
+    setUploading(true);
+    setUploadProgress(10);
+
+    try {
+      // Upload file to storage
+      const filePath = `${user.id}/${Date.now()}-${file.name}`;
+      setUploadProgress(30);
+
+      const { error: uploadError } = await supabase.storage
+        .from("bank-statements")
+        .upload(filePath, file);
+
+      if (uploadError) {
+        throw new Error(`Storage upload failed: ${uploadError.message}`);
+      }
+
+      setUploadProgress(60);
+
+      // Create database record
+      const { data: statementData, error: dbError } = await supabase
+        .from("bank_statements")
+        .insert({
+          user_id: user.id,
+          file_name: file.name,
+          file_path: filePath,
+          file_type: file.type,
+        })
+        .select()
+        .single();
+
+      if (dbError) {
+        throw new Error(`Database insert failed: ${dbError.message}`);
+      }
+
+      setUploadProgress(90);
+
+      // Refresh statements list
+      await fetchStatements();
+
+      setUploadProgress(100);
+      toast.success("File uploaded successfully!");
+
+      // Reset file input
+      e.target.value = "";
+    } catch (error: any) {
+      console.error("Upload error:", error);
+      toast.error(error.message || "Failed to upload file. Please try again.");
+    } finally {
+      setUploading(false);
+      setTimeout(() => setUploadProgress(0), 1000);
+    }
   };
 
   if (loading) {
@@ -146,24 +205,35 @@ const Dashboard = () => {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              <div className="border-2 border-dashed border-border rounded-lg p-12 text-center hover:border-primary transition-colors cursor-pointer">
+              <div className={`border-2 border-dashed border-border rounded-lg p-12 text-center transition-colors ${
+                uploading ? "opacity-50 cursor-not-allowed" : "hover:border-primary cursor-pointer"
+              }`}>
                 <Input
                   id="file-upload"
                   type="file"
                   accept=".pdf,.csv,.xlsx,.xls"
                   onChange={handleFileUpload}
                   className="hidden"
+                  disabled={uploading}
                 />
-                <Label htmlFor="file-upload" className="cursor-pointer">
-                  <Upload className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <Label htmlFor="file-upload" className={uploading ? "cursor-not-allowed" : "cursor-pointer"}>
+                  <Upload className={`h-12 w-12 mx-auto mb-4 ${uploading ? "text-muted-foreground animate-pulse" : "text-muted-foreground"}`} />
                   <p className="text-lg font-medium mb-2">
-                    Click to upload or drag and drop
+                    {uploading ? "Uploading..." : "Click to upload or drag and drop"}
                   </p>
                   <p className="text-sm text-muted-foreground">
                     PDF, CSV, or XLSX (Max 20MB)
                   </p>
                 </Label>
               </div>
+              {uploading && (
+                <div className="space-y-2">
+                  <Progress value={uploadProgress} className="h-2" />
+                  <p className="text-xs text-center text-muted-foreground">
+                    Uploading: {uploadProgress}%
+                  </p>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
