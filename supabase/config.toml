@@ -1,1 +1,4 @@
 project_id = "wadvvnmyiwznlwklhxgr"
+
+[functions.process-bank-statement]
+verify_jwt = false

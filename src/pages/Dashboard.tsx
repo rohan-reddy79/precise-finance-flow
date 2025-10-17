@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { User } from "@supabase/supabase-js";
@@ -16,6 +16,7 @@ const Dashboard = () => {
   const [statements, setStatements] = useState<any[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -122,6 +123,7 @@ const Dashboard = () => {
           file_name: file.name,
           file_path: filePath,
           file_type: file.type,
+          processing_status: 'pending',
         })
         .select()
         .single();
@@ -130,16 +132,39 @@ const Dashboard = () => {
         throw new Error(`Database insert failed: ${dbError.message}`);
       }
 
-      setUploadProgress(90);
+      setUploadProgress(80);
 
-      // Refresh statements list
-      await fetchStatements();
+      toast.success("Upload Complete!", {
+        description: "Processing your bank statement...",
+      });
+
+      // Trigger processing
+      const { error: processError } = await supabase.functions.invoke('process-bank-statement', {
+        body: { statementId: statementData.id }
+      });
+
+      if (processError) {
+        console.error('Processing error:', processError);
+        toast.info("Processing Started", {
+          description: "Statement processing is in progress. Refresh to see results.",
+        });
+      } else {
+        toast.success("Success!", {
+          description: "Bank statement processed successfully",
+        });
+      }
 
       setUploadProgress(100);
-      toast.success("File uploaded successfully!");
 
       // Reset file input
-      e.target.value = "";
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+      
+      // Refresh after a short delay to allow processing to complete
+      setTimeout(() => {
+        fetchStatements();
+      }, 2000);
     } catch (error: any) {
       console.error("Upload error:", error);
       toast.error(error.message || "Failed to upload file. Please try again.");
@@ -209,6 +234,7 @@ const Dashboard = () => {
                 uploading ? "opacity-50 cursor-not-allowed" : "hover:border-primary cursor-pointer"
               }`}>
                 <Input
+                  ref={fileInputRef}
                   id="file-upload"
                   type="file"
                   accept=".pdf,.csv,.xlsx,.xls"
@@ -267,20 +293,46 @@ const Dashboard = () => {
                     </CardTitle>
                     <CardDescription>
                       Uploaded {new Date(statement.upload_date).toLocaleDateString()}
+                      {statement.processing_status && (
+                        <span className={`ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                          statement.processing_status === 'completed' 
+                            ? 'bg-green-100 text-green-800' 
+                            : statement.processing_status === 'failed'
+                            ? 'bg-red-100 text-red-800'
+                            : statement.processing_status === 'processing'
+                            ? 'bg-blue-100 text-blue-800'
+                            : 'bg-gray-100 text-gray-800'
+                        }`}>
+                          {statement.processing_status}
+                        </span>
+                      )}
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
+                    {statement.parsing_errors && (
+                      <p className="text-xs text-red-600 mb-3 p-2 bg-red-50 rounded">
+                        {statement.parsing_errors}
+                      </p>
+                    )}
                     <div className="space-y-2 text-sm">
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Transactions</span>
-                        <span className="font-medium">{statement.total_transactions}</span>
+                        <span className="font-medium">{statement.total_transactions || 0}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Total Amount</span>
                         <span className="font-medium">
-                          ${Math.abs(statement.total_amount).toFixed(2)}
+                          £{statement.total_amount?.toFixed(2) || "0.00"}
                         </span>
                       </div>
+                      {statement.statement_period_start && statement.statement_period_end && (
+                        <div className="flex justify-between text-xs pt-2 border-t">
+                          <span className="text-muted-foreground">Period</span>
+                          <span className="font-medium">
+                            {new Date(statement.statement_period_start).toLocaleDateString()} - {new Date(statement.statement_period_end).toLocaleDateString()}
+                          </span>
+                        </div>
+                      )}
                     </div>
                     <Button variant="outline" className="w-full mt-4">
                       View Analysis

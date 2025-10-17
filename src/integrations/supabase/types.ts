@@ -21,6 +21,9 @@ export type Database = {
           file_path: string
           file_type: string
           id: string
+          parsing_errors: string | null
+          processed_at: string | null
+          processing_status: string | null
           statement_period_end: string | null
           statement_period_start: string | null
           total_amount: number | null
@@ -35,6 +38,9 @@ export type Database = {
           file_path: string
           file_type: string
           id?: string
+          parsing_errors?: string | null
+          processed_at?: string | null
+          processing_status?: string | null
           statement_period_end?: string | null
           statement_period_start?: string | null
           total_amount?: number | null
@@ -49,6 +55,9 @@ export type Database = {
           file_path?: string
           file_type?: string
           id?: string
+          parsing_errors?: string | null
+          processed_at?: string | null
+          processing_status?: string | null
           statement_period_end?: string | null
           statement_period_start?: string | null
           total_amount?: number | null
