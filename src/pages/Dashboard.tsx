@@ -53,7 +53,7 @@ const Dashboard = () => {
         .from("bank_statements")
         .select("*")
         .order("upload_date", { ascending: false })
-        .limit(5);
+        .limit(20);
 
       if (error) throw error;
       setStatements(data || []);
