@@ -1,1 +1,10 @@
 project_id = "wadvvnmyiwznlwklhxgr"
+
+[functions.process-bank-statement]
+verify_jwt = true
+
+[functions.generate-project-report]
+verify_jwt = true
+
+[functions.predict-expenses]
+verify_jwt = true

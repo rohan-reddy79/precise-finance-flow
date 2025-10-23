@@ -24,6 +24,7 @@ export type Database = {
           parsing_errors: string | null
           processed_at: string | null
           processing_status: string | null
+          project_id: string | null
           statement_period_end: string | null
           statement_period_start: string | null
           total_amount: number | null
@@ -41,6 +42,7 @@ export type Database = {
           parsing_errors?: string | null
           processed_at?: string | null
           processing_status?: string | null
+          project_id?: string | null
           statement_period_end?: string | null
           statement_period_start?: string | null
           total_amount?: number | null
@@ -58,6 +60,7 @@ export type Database = {
           parsing_errors?: string | null
           processed_at?: string | null
           processing_status?: string | null
+          project_id?: string | null
           statement_period_end?: string | null
           statement_period_start?: string | null
           total_amount?: number | null
@@ -67,6 +70,13 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "bank_statements_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "bank_statements_user_id_fkey"
             columns: ["user_id"]
@@ -114,6 +124,47 @@ export type Database = {
           },
         ]
       }
+      expense_predictions: {
+        Row: {
+          category: Database["public"]["Enums"]["transaction_category"] | null
+          confidence_score: number | null
+          generated_at: string
+          id: string
+          predicted_amount: number
+          prediction_month: string
+          project_id: string
+          user_id: string
+        }
+        Insert: {
+          category?: Database["public"]["Enums"]["transaction_category"] | null
+          confidence_score?: number | null
+          generated_at?: string
+          id?: string
+          predicted_amount: number
+          prediction_month: string
+          project_id: string
+          user_id: string
+        }
+        Update: {
+          category?: Database["public"]["Enums"]["transaction_category"] | null
+          confidence_score?: number | null
+          generated_at?: string
+          id?: string
+          predicted_amount?: number
+          prediction_month?: string
+          project_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "expense_predictions_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           created_at: string
@@ -135,6 +186,65 @@ export type Database = {
           full_name?: string | null
           id?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      project_reports: {
+        Row: {
+          generated_at: string
+          id: string
+          project_id: string
+          report_data: Json
+          user_id: string
+        }
+        Insert: {
+          generated_at?: string
+          id?: string
+          project_id: string
+          report_data: Json
+          user_id: string
+        }
+        Update: {
+          generated_at?: string
+          id?: string
+          project_id?: string
+          report_data?: Json
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_reports_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      projects: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          name?: string
+          updated_at?: string
+          user_id?: string
         }
         Relationships: []
       }
