@@ -54,7 +54,7 @@ Deno.serve(async (req) => {
     // Get all transactions for this project
     const { data: statements } = await supabase
       .from('bank_statements')
-      .select('id')
+      .select('id, currency')
       .eq('project_id', projectId)
       .eq('user_id', user.id);
 
@@ -66,6 +66,7 @@ Deno.serve(async (req) => {
     }
 
     const statementIds = statements.map(s => s.id);
+    const projectCurrency = statements[0]?.currency || 'USD';
 
     const { data: transactions } = await supabase
       .from('transactions')
@@ -99,17 +100,26 @@ Deno.serve(async (req) => {
     if (!LOVABLE_API_KEY) {
       throw new Error('LOVABLE_API_KEY is not configured');
     }
+    
+    const currencySymbols: Record<string, string> = {
+      'USD': '$',
+      'INR': '₹',
+      'GBP': '£',
+      'EUR': '€'
+    };
+    const currencySymbol = currencySymbols[projectCurrency] || projectCurrency;
 
     const historicalSummary = Object.entries(monthlyData)
       .sort()
       .slice(-12) // Last 12 months
       .map(([month, categories]) => {
         const total = Object.values(categories).reduce((sum, amt) => sum + amt, 0);
-        return `${month}: $${total.toFixed(2)} (${Object.entries(categories).map(([cat, amt]) => `${cat}: $${amt.toFixed(2)}`).join(', ')})`;
+        return `${month}: ${currencySymbol}${total.toFixed(2)} (${Object.entries(categories).map(([cat, amt]) => `${cat}: ${currencySymbol}${amt.toFixed(2)}`).join(', ')})`;
       }).join('\n');
 
     const aiPrompt = `You are a financial forecasting AI. Based on this historical spending data, predict expenses for the next 6 months by category.
 
+Currency: ${projectCurrency}
 Historical Monthly Spending:
 ${historicalSummary}
 

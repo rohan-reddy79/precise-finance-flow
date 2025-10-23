@@ -54,7 +54,7 @@ Deno.serve(async (req) => {
     // Get all transactions for this project
     const { data: statements } = await supabase
       .from('bank_statements')
-      .select('id')
+      .select('id, currency')
       .eq('project_id', projectId)
       .eq('user_id', user.id);
 
@@ -66,6 +66,7 @@ Deno.serve(async (req) => {
     }
 
     const statementIds = statements.map(s => s.id);
+    const projectCurrency = statements[0]?.currency || 'USD';
 
     const { data: transactions } = await supabase
       .from('transactions')
@@ -85,6 +86,14 @@ Deno.serve(async (req) => {
     const monthlyTotals: Record<string, number> = {};
     let totalIncome = 0;
     let totalExpenses = 0;
+    
+    const currencySymbols: Record<string, string> = {
+      'USD': '$',
+      'INR': '₹',
+      'GBP': '£',
+      'EUR': '€'
+    };
+    const currencySymbol = currencySymbols[projectCurrency] || projectCurrency;
 
     transactions.forEach(t => {
       const amount = parseFloat(t.amount);
@@ -108,15 +117,16 @@ Deno.serve(async (req) => {
 
     const aiPrompt = `You are a financial analyst. Analyze this financial data and provide a comprehensive report:
 
-Total Income: $${totalIncome.toFixed(2)}
-Total Expenses: $${totalExpenses.toFixed(2)}
-Net: $${(totalIncome - totalExpenses).toFixed(2)}
+Currency: ${projectCurrency}
+Total Income: ${currencySymbol}${totalIncome.toFixed(2)}
+Total Expenses: ${currencySymbol}${totalExpenses.toFixed(2)}
+Net: ${currencySymbol}${(totalIncome - totalExpenses).toFixed(2)}
 
 Expenses by Category:
-${Object.entries(categoryTotals).map(([cat, amt]) => `- ${cat}: $${amt.toFixed(2)} (${((amt / totalExpenses) * 100).toFixed(1)}%)`).join('\n')}
+${Object.entries(categoryTotals).map(([cat, amt]) => `- ${cat}: ${currencySymbol}${amt.toFixed(2)} (${((amt / totalExpenses) * 100).toFixed(1)}%)`).join('\n')}
 
 Monthly Net Spending:
-${Object.entries(monthlyTotals).sort().map(([month, amt]) => `- ${month}: $${amt.toFixed(2)}`).join('\n')}
+${Object.entries(monthlyTotals).sort().map(([month, amt]) => `- ${month}: ${currencySymbol}${amt.toFixed(2)}`).join('\n')}
 
 Provide:
 1. Executive Summary (3-4 sentences)
@@ -172,6 +182,7 @@ Format as JSON with keys: summary, insights (array), patterns (string), recommen
     reportData.categoryBreakdown = categoryTotals;
     reportData.monthlyTrends = monthlyTotals;
     reportData.transactionCount = transactions.length;
+    reportData.currency = projectCurrency;
 
     // Save report to database
     const { data: savedReport, error: saveError } = await supabase

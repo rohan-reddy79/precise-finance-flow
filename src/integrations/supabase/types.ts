@@ -17,6 +17,7 @@ export type Database = {
       bank_statements: {
         Row: {
           created_at: string
+          currency: string | null
           file_name: string
           file_path: string
           file_type: string
@@ -35,6 +36,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          currency?: string | null
           file_name: string
           file_path: string
           file_type: string
@@ -53,6 +55,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          currency?: string | null
           file_name?: string
           file_path?: string
           file_type?: string

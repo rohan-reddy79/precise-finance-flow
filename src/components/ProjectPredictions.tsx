@@ -18,10 +18,29 @@ interface Prediction {
 const ProjectPredictions = ({ projectId }: ProjectPredictionsProps) => {
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [currency, setCurrency] = useState('USD');
 
   useEffect(() => {
     loadPredictions();
+    loadCurrency();
   }, [projectId]);
+
+  const loadCurrency = async () => {
+    try {
+      const { data } = await supabase
+        .from("bank_statements")
+        .select("currency")
+        .eq("project_id", projectId)
+        .limit(1)
+        .single();
+      
+      if (data?.currency) {
+        setCurrency(data.currency);
+      }
+    } catch (error) {
+      console.error("Error loading currency:", error);
+    }
+  };
 
   const loadPredictions = async () => {
     try {
@@ -99,6 +118,14 @@ const ProjectPredictions = ({ projectId }: ProjectPredictionsProps) => {
     amount
   }));
 
+  const currencySymbols: Record<string, string> = {
+    'USD': '$',
+    'INR': '₹',
+    'GBP': '£',
+    'EUR': '€'
+  };
+  const currencySymbol = currencySymbols[currency] || currency;
+
   return (
     <div className="space-y-6">
       <Card>
@@ -112,7 +139,7 @@ const ProjectPredictions = ({ projectId }: ProjectPredictionsProps) => {
               <XAxis dataKey="month" />
               <YAxis />
               <Tooltip 
-                formatter={(value: number) => `$${value.toFixed(2)}`}
+                formatter={(value: number) => `${currencySymbol}${value.toFixed(2)}`}
               />
               <Legend />
               <Line 
@@ -141,7 +168,7 @@ const ProjectPredictions = ({ projectId }: ProjectPredictionsProps) => {
                     Confidence: {data.confidence}%
                   </p>
                 </div>
-                <p className="text-2xl font-bold">${data.total.toFixed(2)}</p>
+                <p className="text-2xl font-bold">{currencySymbol}{data.total.toFixed(2)}</p>
               </div>
             ))}
           </div>
@@ -160,7 +187,7 @@ const ProjectPredictions = ({ projectId }: ProjectPredictionsProps) => {
                 <XAxis dataKey="category" />
                 <YAxis />
                 <Tooltip 
-                  formatter={(value: number) => `$${value.toFixed(2)}`}
+                  formatter={(value: number) => `${currencySymbol}${value.toFixed(2)}`}
                 />
                 <Bar dataKey="amount" fill="hsl(var(--primary))" />
               </BarChart>
