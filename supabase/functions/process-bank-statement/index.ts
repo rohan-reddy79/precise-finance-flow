@@ -1,10 +1,25 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import * as XLSX from 'https://esm.sh/xlsx@0.18.5';
+import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
+
+const TransactionSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  description: z.string().max(500).trim(),
+  amount: z.number().min(-1000000).max(1000000),
+  is_debit: z.boolean()
+});
+
+const ErrorCodes = {
+  UNAUTHORIZED: 'E001',
+  PROCESSING_FAILED: 'E002',
+  INVALID_FILE: 'E003',
+  NOT_FOUND: 'E004'
 };
 
 serve(async (req) => {
@@ -16,9 +31,53 @@ serve(async (req) => {
     const { statementId } = await req.json();
     console.log('Processing statement:', statementId);
 
+    // Authenticate user
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({ error: 'Authentication required', code: ErrorCodes.UNAUTHORIZED }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Verify user token and ownership
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+
+    if (authError || !user) {
+      console.error('Authentication error:', authError);
+      return new Response(
+        JSON.stringify({ error: 'Invalid authentication', code: ErrorCodes.UNAUTHORIZED }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Verify statement ownership
+    const { data: ownershipCheck, error: ownershipError } = await supabase
+      .from('bank_statements')
+      .select('user_id')
+      .eq('id', statementId)
+      .single();
+
+    if (ownershipError || !ownershipCheck) {
+      console.error('Statement lookup error:', { statementId, error: ownershipError });
+      return new Response(
+        JSON.stringify({ error: 'Resource not found', code: ErrorCodes.NOT_FOUND }),
+        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (ownershipCheck.user_id !== user.id) {
+      console.error('Ownership violation attempt:', { statementId, userId: user.id, ownerId: ownershipCheck.user_id });
+      return new Response(
+        JSON.stringify({ error: 'Resource not found', code: ErrorCodes.NOT_FOUND }),
+        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     // Update status to processing
     await supabase
@@ -34,7 +93,8 @@ serve(async (req) => {
       .single();
 
     if (stmtError || !statement) {
-      throw new Error('Statement not found');
+      console.error('Statement fetch error:', stmtError);
+      throw new Error('STATEMENT_ERROR');
     }
 
     console.log('Downloading file:', statement.file_path);
@@ -46,7 +106,8 @@ serve(async (req) => {
       .download(statement.file_path);
 
     if (downloadError || !fileData) {
-      throw new Error('Failed to download file');
+      console.error('File download error:', downloadError);
+      throw new Error('FILE_DOWNLOAD_ERROR');
     }
 
     // Parse based on file type
@@ -58,13 +119,15 @@ serve(async (req) => {
     } else if (fileType === 'pdf' || fileType.includes('pdf')) {
       transactions = await parsePDF(fileData);
     } else {
-      throw new Error(`Unsupported file type: ${fileType}`);
+      console.error('Unsupported file type:', fileType);
+      throw new Error('UNSUPPORTED_FILE_TYPE');
     }
 
     console.log(`Parsed ${transactions.length} transactions`);
 
     if (transactions.length === 0) {
-      throw new Error('No transactions found in file');
+      console.error('No transactions found in file');
+      throw new Error('EMPTY_FILE');
     }
 
     // Get categorization rules for the user
@@ -95,7 +158,8 @@ serve(async (req) => {
       .insert(categorizedTransactions);
 
     if (insertError) {
-      throw new Error(`Failed to insert transactions: ${insertError.message}`);
+      console.error('Transaction insert error:', insertError);
+      throw new Error('INSERT_ERROR');
     }
 
     // Calculate aggregates
@@ -129,7 +193,11 @@ serve(async (req) => {
     );
 
   } catch (error) {
-    console.error('Processing error:', error);
+    console.error('Processing error details:', {
+      error: error instanceof Error ? error.message : 'Unknown',
+      stack: error instanceof Error ? error.stack : undefined,
+      timestamp: new Date().toISOString()
+    });
 
     // Update status to failed if we have statementId
     try {
@@ -142,7 +210,7 @@ serve(async (req) => {
         .from('bank_statements')
         .update({
           processing_status: 'failed',
-          parsing_errors: error instanceof Error ? error.message : 'Unknown error',
+          parsing_errors: 'Processing failed',
         })
         .eq('id', statementId);
     } catch (updateError) {
@@ -151,7 +219,8 @@ serve(async (req) => {
 
     return new Response(
       JSON.stringify({
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: 'Processing failed',
+        code: ErrorCodes.PROCESSING_FAILED
       }),
       {
         status: 500,
@@ -163,11 +232,26 @@ serve(async (req) => {
 
 async function parseSpreadsheet(fileData: Blob): Promise<any[]> {
   const arrayBuffer = await fileData.arrayBuffer();
-  const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
+  
+  // Validate file size (max 10MB)
+  if (arrayBuffer.byteLength > 10 * 1024 * 1024) {
+    throw new Error('FILE_TOO_LARGE');
+  }
+  
+  const workbook = XLSX.read(new Uint8Array(arrayBuffer), { 
+    type: 'array',
+    cellFormula: false, // Disable formula parsing for security
+    cellHTML: false // Disable HTML parsing
+  });
   
   const sheetName = workbook.SheetNames[0];
   const worksheet = workbook.Sheets[sheetName];
   const jsonData = XLSX.utils.sheet_to_json(worksheet, { raw: false });
+
+  // Validate row count (max 10,000 rows)
+  if (jsonData.length > 10000) {
+    throw new Error('TOO_MANY_ROWS');
+  }
 
   const transactions: any[] = [];
 
@@ -217,12 +301,21 @@ async function parseSpreadsheet(fileData: Blob): Promise<any[]> {
 
     if (amount === 0) continue;
 
-    transactions.push({
+    const transactionData = {
       date: parseDate(dateStr),
-      description: description?.toString().trim() || 'Unknown',
+      description: sanitizeString(description?.toString().trim() || 'Unknown'),
       amount: isDebit ? -Math.abs(amount) : Math.abs(amount),
       is_debit: isDebit,
-    });
+    };
+
+    // Validate transaction data
+    const validationResult = TransactionSchema.safeParse(transactionData);
+    if (!validationResult.success) {
+      console.error('Transaction validation failed:', validationResult.error);
+      continue; // Skip invalid transactions
+    }
+
+    transactions.push(validationResult.data);
   }
 
   return transactions;
@@ -303,5 +396,12 @@ function extractMerchant(description: string): string | null {
   
   // Extract first few words as potential merchant name
   const words = description.trim().split(/\s+/);
-  return words.slice(0, 3).join(' ');
+  return sanitizeString(words.slice(0, 3).join(' '));
+}
+
+function sanitizeString(input: string): string {
+  // Remove potentially dangerous characters and limit length
+  return input
+    .replace(/[<>\"'&]/g, '') // Remove HTML/XSS characters
+    .slice(0, 500); // Enforce max length
 }
