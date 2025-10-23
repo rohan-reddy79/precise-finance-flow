@@ -111,10 +111,13 @@ Deno.serve(async (req) => {
 
     // Parse based on file type
     let transactions: any[] = [];
+    let currency = 'USD';
     const fileType = statement.file_type.toLowerCase();
 
     if (fileType === 'csv' || fileType.includes('spreadsheet') || fileType.includes('excel')) {
-      transactions = await parseSpreadsheet(fileData);
+      const parseResult = await parseSpreadsheet(fileData);
+      transactions = parseResult.transactions;
+      currency = parseResult.currency;
     } else if (fileType === 'pdf' || fileType.includes('pdf')) {
       transactions = await parsePDF(fileData);
     } else {
@@ -177,6 +180,7 @@ Deno.serve(async (req) => {
         statement_period_start: periodStart.toISOString().split('T')[0],
         statement_period_end: periodEnd.toISOString().split('T')[0],
         processed_at: new Date().toISOString(),
+        currency: currency,
       })
       .eq('id', statementId);
 
@@ -229,7 +233,7 @@ Deno.serve(async (req) => {
   }
 });
 
-async function parseSpreadsheet(fileData: Blob): Promise<any[]> {
+async function parseSpreadsheet(fileData: Blob): Promise<{ transactions: any[], currency: string }> {
   const arrayBuffer = await fileData.arrayBuffer();
   
   // Validate file size (max 10MB)
@@ -246,6 +250,20 @@ async function parseSpreadsheet(fileData: Blob): Promise<any[]> {
   const sheetName = workbook.SheetNames[0];
   const worksheet = workbook.Sheets[sheetName];
   const jsonData = XLSX.utils.sheet_to_json(worksheet, { raw: false });
+  
+  // Detect currency from file content
+  const allText = JSON.stringify(jsonData).toLowerCase();
+  let detectedCurrency = 'USD'; // Default
+  
+  if (allText.includes('rupee') || allText.includes('inr') || allText.includes('₹') || allText.includes('rs.')) {
+    detectedCurrency = 'INR';
+  } else if (allText.includes('gbp') || allText.includes('£') || allText.includes('pound')) {
+    detectedCurrency = 'GBP';
+  } else if (allText.includes('eur') || allText.includes('€') || allText.includes('euro')) {
+    detectedCurrency = 'EUR';
+  } else if (allText.includes('usd') || allText.includes('$') || allText.includes('dollar')) {
+    detectedCurrency = 'USD';
+  }
 
   // Validate row count (max 10,000 rows)
   if (jsonData.length > 10000) {
@@ -317,7 +335,7 @@ async function parseSpreadsheet(fileData: Blob): Promise<any[]> {
     transactions.push(validationResult.data);
   }
 
-  return transactions;
+  return { transactions, currency: detectedCurrency };
 }
 
 async function parsePDF(fileData: Blob): Promise<any[]> {

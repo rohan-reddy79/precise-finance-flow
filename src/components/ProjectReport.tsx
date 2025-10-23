@@ -19,6 +19,7 @@ interface ReportData {
   categoryBreakdown: Record<string, number>;
   monthlyTrends: Record<string, number>;
   transactionCount: number;
+  currency?: string;
 }
 
 const ProjectReport = ({ projectId }: ProjectReportProps) => {
@@ -68,6 +69,15 @@ const ProjectReport = ({ projectId }: ProjectReportProps) => {
     );
   }
 
+  const currencySymbols: Record<string, string> = {
+    'USD': '$',
+    'INR': '₹',
+    'GBP': '£',
+    'EUR': '€'
+  };
+  const currency = report.currency || 'USD';
+  const currencySymbol = currencySymbols[currency] || currency;
+
   return (
     <div className="space-y-6">
       <Card>
@@ -98,7 +108,7 @@ const ProjectReport = ({ projectId }: ProjectReportProps) => {
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-bold text-green-600">
-              ${report.totalIncome.toFixed(2)}
+              {currencySymbol}{report.totalIncome.toFixed(2)}
             </p>
           </CardContent>
         </Card>
@@ -109,7 +119,7 @@ const ProjectReport = ({ projectId }: ProjectReportProps) => {
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-bold text-red-600">
-              ${report.totalExpenses.toFixed(2)}
+              {currencySymbol}{report.totalExpenses.toFixed(2)}
             </p>
           </CardContent>
         </Card>
@@ -120,7 +130,7 @@ const ProjectReport = ({ projectId }: ProjectReportProps) => {
           </CardHeader>
           <CardContent>
             <p className={`text-2xl font-bold ${(report.totalIncome - report.totalExpenses) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              ${(report.totalIncome - report.totalExpenses).toFixed(2)}
+              {currencySymbol}{(report.totalIncome - report.totalExpenses).toFixed(2)}
             </p>
           </CardContent>
         </Card>
@@ -155,7 +165,7 @@ const ProjectReport = ({ projectId }: ProjectReportProps) => {
                   <div className="flex justify-between text-sm mb-1">
                     <span>{category}</span>
                     <span className="font-medium">
-                      ${amount.toFixed(2)} ({((amount / report.totalExpenses) * 100).toFixed(1)}%)
+                      {currencySymbol}{amount.toFixed(2)} ({((amount / report.totalExpenses) * 100).toFixed(1)}%)
                     </span>
                   </div>
                   <Progress value={(amount / report.totalExpenses) * 100} className="h-2" />
