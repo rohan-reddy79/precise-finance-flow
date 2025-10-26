@@ -29,6 +29,36 @@ const ProjectUpload = ({ projectId, onUploadComplete }: ProjectUploadProps) => {
       return;
     }
 
+    // Validate file size (10MB max)
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    const tooLarge = files.filter(f => f.size > maxSize);
+    if (tooLarge.length > 0) {
+      toast({
+        title: "Files too large",
+        description: `${tooLarge.map(f => f.name).join(', ')} exceed 10MB limit`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Verify MIME types
+    const validMimeTypes = [
+      'text/csv',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    ];
+    
+    const invalidMime = files.filter(f => !validMimeTypes.includes(f.type));
+    if (invalidMime.length > 0) {
+      toast({
+        title: "Invalid file type",
+        description: "Please upload CSV or Excel files only",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Validate file extensions
     const validFiles = files.filter(file => {
       const ext = file.name.split('.').pop()?.toLowerCase();
       return ext === 'csv' || ext === 'xlsx' || ext === 'xls';
@@ -40,6 +70,7 @@ const ProjectUpload = ({ projectId, onUploadComplete }: ProjectUploadProps) => {
         description: "Only CSV and XLSX files are supported",
         variant: "destructive",
       });
+      return;
     }
 
     setSelectedFiles([...selectedFiles, ...validFiles]);
