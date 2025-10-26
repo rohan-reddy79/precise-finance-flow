@@ -5,6 +5,10 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+const RATE_LIMITS = {
+  GENERATE_REPORT: { count: 5, windowMinutes: 60 }
+};
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -28,10 +32,68 @@ Deno.serve(async (req) => {
 
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
-      return new Response(JSON.stringify({ error: 'Invalid authentication' }), {
+      return new Response(JSON.stringify({ error: 'AUTHENTICATION_REQUIRED', code: 'E001' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+
+    // Rate limiting check
+    const { data: rateLimit } = await supabase
+      .from('rate_limits')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('action', 'generate_report')
+      .single();
+
+    const now = new Date();
+    const windowMs = RATE_LIMITS.GENERATE_REPORT.windowMinutes * 60 * 1000;
+
+    if (rateLimit) {
+      const windowStart = new Date(rateLimit.window_start);
+      const elapsed = now.getTime() - windowStart.getTime();
+
+      if (elapsed < windowMs) {
+        if (rateLimit.request_count >= RATE_LIMITS.GENERATE_REPORT.count) {
+          const retryAfter = Math.ceil((windowMs - elapsed) / 1000);
+          console.log('Rate limit exceeded:', { userId: user.id, action: 'generate_report' });
+          return new Response(
+            JSON.stringify({ error: 'RATE_LIMIT_EXCEEDED', code: 'E002', retryAfter }),
+            { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        // Increment counter
+        await supabase
+          .from('rate_limits')
+          .update({ 
+            request_count: rateLimit.request_count + 1,
+            last_request: now.toISOString()
+          })
+          .eq('user_id', user.id)
+          .eq('action', 'generate_report');
+      } else {
+        // Reset window
+        await supabase
+          .from('rate_limits')
+          .update({ 
+            request_count: 1,
+            window_start: now.toISOString(),
+            last_request: now.toISOString()
+          })
+          .eq('user_id', user.id)
+          .eq('action', 'generate_report');
+      }
+    } else {
+      // Create new rate limit record
+      await supabase
+        .from('rate_limits')
+        .insert({ 
+          user_id: user.id,
+          action: 'generate_report',
+          request_count: 1,
+          window_start: now.toISOString(),
+          last_request: now.toISOString()
+        });
     }
 
     const { projectId } = await req.json();
@@ -45,7 +107,8 @@ Deno.serve(async (req) => {
       .single();
 
     if (projectError || !project) {
-      return new Response(JSON.stringify({ error: 'Project not found' }), {
+      console.error('Project lookup failed:', { projectId, userId: user.id, error: projectError });
+      return new Response(JSON.stringify({ error: 'RESOURCE_NOT_FOUND', code: 'E003' }), {
         status: 404,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -59,7 +122,8 @@ Deno.serve(async (req) => {
       .eq('user_id', user.id);
 
     if (!statements || statements.length === 0) {
-      return new Response(JSON.stringify({ error: 'No statements found for this project' }), {
+      console.error('No statements found:', { projectId });
+      return new Response(JSON.stringify({ error: 'INSUFFICIENT_DATA', code: 'E004' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -75,7 +139,8 @@ Deno.serve(async (req) => {
       .eq('user_id', user.id);
 
     if (!transactions || transactions.length === 0) {
-      return new Response(JSON.stringify({ error: 'No transactions found' }), {
+      console.error('No transactions found:', { projectId, statementCount: statements.length });
+      return new Response(JSON.stringify({ error: 'INSUFFICIENT_DATA', code: 'E004' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -206,9 +271,12 @@ Format as JSON with keys: summary, insights (array), patterns (string), recommen
     });
 
   } catch (error) {
-    console.error('Error generating report:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-    return new Response(JSON.stringify({ error: errorMessage }), {
+    console.error('Error generating report:', {
+      error: error instanceof Error ? error.message : 'Unknown',
+      stack: error instanceof Error ? error.stack : undefined,
+      timestamp: new Date().toISOString()
+    });
+    return new Response(JSON.stringify({ error: 'REPORT_GENERATION_FAILED', code: 'E005' }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

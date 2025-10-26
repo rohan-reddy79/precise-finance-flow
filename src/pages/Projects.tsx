@@ -9,6 +9,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Plus, FolderOpen, ArrowLeft } from "lucide-react";
+import { z } from "zod";
+
+const projectSchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(100, "Name must be less than 100 characters"),
+  description: z.string().max(500, "Description must be less than 500 characters").optional(),
+});
 
 interface Project {
   id: string;
@@ -71,10 +77,13 @@ const Projects = () => {
   };
 
   const createProject = async () => {
-    if (!newProject.name.trim()) {
+    // Validate input
+    const validation = projectSchema.safeParse(newProject);
+    if (!validation.success) {
+      const firstError = validation.error.errors[0];
       toast({
-        title: "Name required",
-        description: "Please enter a project name",
+        title: "Validation error",
+        description: firstError.message,
         variant: "destructive",
       });
       return;
@@ -89,8 +98,8 @@ const Projects = () => {
         .from("projects")
         .insert([
           {
-            name: newProject.name,
-            description: newProject.description,
+            name: validation.data.name,
+            description: validation.data.description || null,
             user_id: user.id,
           },
         ])
