@@ -251,6 +251,33 @@ export type Database = {
         }
         Relationships: []
       }
+      rate_limits: {
+        Row: {
+          action: string
+          id: string
+          last_request: string
+          request_count: number
+          user_id: string
+          window_start: string
+        }
+        Insert: {
+          action: string
+          id?: string
+          last_request?: string
+          request_count?: number
+          user_id: string
+          window_start?: string
+        }
+        Update: {
+          action?: string
+          id?: string
+          last_request?: string
+          request_count?: number
+          user_id?: string
+          window_start?: string
+        }
+        Relationships: []
+      }
       transactions: {
         Row: {
           amount: number
