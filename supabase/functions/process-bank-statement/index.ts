@@ -109,6 +109,30 @@ Deno.serve(async (req) => {
       throw new Error('FILE_DOWNLOAD_ERROR');
     }
 
+    // Validate file signature (magic bytes)
+    const buffer = await fileData.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    
+    if (bytes.length < 4) {
+      console.error('File too small or corrupted');
+      throw new Error('INVALID_FILE_SIGNATURE');
+    }
+
+    // Check file signatures
+    const isXlsx = bytes[0] === 0x50 && bytes[1] === 0x4B; // XLSX starts with PK (ZIP signature)
+    const isXls = bytes[0] === 0xD0 && bytes[1] === 0xCF; // XLS starts with OLE2 signature
+    const isCsv = bytes[0] >= 0x20 && bytes[0] <= 0x7E; // CSV starts with printable ASCII
+    
+    if (!isXlsx && !isXls && !isCsv) {
+      console.error('Invalid file signature detected:', { 
+        firstBytes: Array.from(bytes.slice(0, 4)),
+        fileType: statement.file_type 
+      });
+      throw new Error('INVALID_FILE_SIGNATURE');
+    }
+
+    console.log('File signature validated:', { isXlsx, isXls, isCsv });
+
     // Parse based on file type
     let transactions: any[] = [];
     let currency = 'USD';
