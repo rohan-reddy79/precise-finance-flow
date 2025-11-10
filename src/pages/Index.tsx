@@ -17,6 +17,9 @@ const Index = () => {
             </span>
           </div>
           <div className="flex gap-3">
+            <Button variant="ghost" onClick={() => navigate("/app")}>
+              Quick Upload
+            </Button>
             <Button variant="outline" onClick={() => navigate("/auth")}>
               Sign In
             </Button>
