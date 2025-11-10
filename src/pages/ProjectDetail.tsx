@@ -186,6 +186,13 @@ const ProjectDetail = () => {
           </Card>
         </div>
 
+        <div className="mb-6">
+          <Button onClick={() => navigate(`/analysis/${projectId}`)}>
+            <BarChart3 className="h-4 w-4 mr-2" />
+            Open Full Analysis Dashboard
+          </Button>
+        </div>
+
         <Tabs defaultValue="statements" className="space-y-6">
           <TabsList>
             <TabsTrigger value="statements">
