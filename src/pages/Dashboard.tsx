@@ -5,7 +5,7 @@ import { User } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
-import { Upload, FileText, TrendingUp, LogOut, PieChart } from "lucide-react";
+import { Upload, FileText, TrendingUp, LogOut, PieChart, FolderOpen, AlertCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
@@ -198,6 +198,10 @@ const Dashboard = () => {
               </span>
             </div>
             <div className="flex items-center gap-4">
+              <Button variant="default" onClick={() => navigate("/projects")}>
+                <FolderOpen className="h-4 w-4 mr-2" />
+                Projects
+              </Button>
               <span className="text-sm text-muted-foreground">{user?.email}</span>
               <Button variant="outline" onClick={handleSignOut}>
                 <LogOut className="h-4 w-4 mr-2" />
@@ -210,10 +214,36 @@ const Dashboard = () => {
 
       {/* Main Content */}
       <main className="container mx-auto px-6 py-12">
+        {/* Info Banner */}
+        <Card className="mb-8 border-primary/50 bg-primary/5">
+          <CardContent className="pt-6">
+            <div className="flex items-start gap-4">
+              <AlertCircle className="h-6 w-6 text-primary mt-1 flex-shrink-0" />
+              <div className="flex-1">
+                <h3 className="font-semibold text-lg mb-2">💡 New: Project-Based Workflow</h3>
+                <p className="text-muted-foreground mb-4">
+                  We now recommend using <strong>Projects</strong> to organize your bank statements. 
+                  Projects give you access to 18+ analysis templates including AML Analysis, Cash Flow, 
+                  Counterparty Analysis, and more!
+                </p>
+                <div className="flex gap-3">
+                  <Button onClick={() => navigate("/projects")}>
+                    <FolderOpen className="h-4 w-4 mr-2" />
+                    Go to Projects
+                  </Button>
+                  <Button variant="outline" onClick={() => navigate("/projects")}>
+                    Learn More
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         <div className="mb-12">
-          <h1 className="text-4xl font-bold mb-2">Welcome Back</h1>
+          <h1 className="text-4xl font-bold mb-2">Quick Upload</h1>
           <p className="text-xl text-muted-foreground">
-            Upload a statement to get started with your financial analysis
+            Upload a statement here or use Projects for full analysis capabilities
           </p>
         </div>
 
@@ -334,9 +364,29 @@ const Dashboard = () => {
                         </div>
                       )}
                     </div>
-                    <Button variant="outline" className="w-full mt-4">
-                      View Analysis
-                    </Button>
+                    {statement.project_id ? (
+                      <Button 
+                        variant="outline" 
+                        className="w-full mt-4"
+                        onClick={() => navigate(`/analysis/${statement.project_id}`)}
+                      >
+                        View Analysis
+                      </Button>
+                    ) : (
+                      <Button 
+                        variant="outline" 
+                        className="w-full mt-4"
+                        onClick={() => {
+                          toast.info("Migrate to a project first", {
+                            description: "Go to Projects page to organize this statement"
+                          });
+                          navigate("/projects");
+                        }}
+                      >
+                        <FolderOpen className="h-4 w-4 mr-2" />
+                        Move to Project
+                      </Button>
+                    )}
                   </CardContent>
                 </Card>
               ))}

@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Plus, FolderOpen, ArrowLeft } from "lucide-react";
+import { Loader2, Plus, FolderOpen, ArrowLeft, FileWarning, Upload as UploadIcon } from "lucide-react";
 import { z } from "zod";
 
 const projectSchema = z.object({
@@ -30,11 +30,14 @@ const Projects = () => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newProject, setNewProject] = useState({ name: "", description: "" });
   const [creating, setCreating] = useState(false);
+  const [orphanedStatements, setOrphanedStatements] = useState<any[]>([]);
+  const [migrating, setMigrating] = useState(false);
   const navigate = useNavigate();
   const { toast } = useToast();
 
   useEffect(() => {
     loadProjects();
+    loadOrphanedStatements();
   }, []);
 
   const loadProjects = async () => {
@@ -73,6 +76,52 @@ const Projects = () => {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadOrphanedStatements = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data, error } = await supabase
+        .from("bank_statements")
+        .select("*")
+        .is("project_id", null)
+        .order("upload_date", { ascending: false });
+
+      if (error) throw error;
+      setOrphanedStatements(data || []);
+    } catch (error: any) {
+      console.error("Error loading orphaned statements:", error);
+    }
+  };
+
+  const migrateStatementToProject = async (statementId: string, projectId: string) => {
+    setMigrating(true);
+    try {
+      const { error } = await supabase
+        .from("bank_statements")
+        .update({ project_id: projectId })
+        .eq("id", statementId);
+
+      if (error) throw error;
+
+      toast({
+        title: "Statement migrated",
+        description: "Statement has been moved to the project",
+      });
+
+      loadOrphanedStatements();
+      loadProjects();
+    } catch (error: any) {
+      toast({
+        title: "Error migrating statement",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setMigrating(false);
     }
   };
 
@@ -211,6 +260,76 @@ const Projects = () => {
             </DialogContent>
           </Dialog>
         </div>
+
+        {/* Orphaned Files Migration Section */}
+        {orphanedStatements.length > 0 && (
+          <Card className="mb-8 border-warning/50 bg-warning/5">
+            <CardHeader>
+              <div className="flex items-start gap-4">
+                <FileWarning className="h-6 w-6 text-warning mt-1 flex-shrink-0" />
+                <div className="flex-1">
+                  <CardTitle>Files Need Organization</CardTitle>
+                  <CardDescription className="mt-2">
+                    You have {orphanedStatements.length} uploaded file{orphanedStatements.length > 1 ? 's' : ''} that 
+                    {orphanedStatements.length > 1 ? " aren't" : " isn't"} assigned to any project. 
+                    Assign them to a project to access full analysis templates.
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {orphanedStatements.slice(0, 5).map((statement) => (
+                  <div 
+                    key={statement.id} 
+                    className="flex items-center justify-between p-3 border rounded-lg bg-background"
+                  >
+                    <div className="flex items-center gap-3 flex-1">
+                      <UploadIcon className="h-4 w-4 text-muted-foreground" />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-sm truncate">{statement.file_name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Uploaded {new Date(statement.upload_date).toLocaleDateString()}
+                        </p>
+                      </div>
+                    </div>
+                    {projects.length > 0 ? (
+                      <select
+                        className="ml-4 px-3 py-1.5 border rounded-md text-sm"
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            migrateStatementToProject(statement.id, e.target.value);
+                          }
+                        }}
+                        disabled={migrating}
+                      >
+                        <option value="">Move to project...</option>
+                        {projects.map((project) => (
+                          <option key={project.id} value={project.id}>
+                            {project.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <Button 
+                        size="sm" 
+                        variant="outline"
+                        onClick={() => setDialogOpen(true)}
+                      >
+                        Create Project First
+                      </Button>
+                    )}
+                  </div>
+                ))}
+                {orphanedStatements.length > 5 && (
+                  <p className="text-xs text-muted-foreground text-center pt-2">
+                    + {orphanedStatements.length - 5} more file{orphanedStatements.length - 5 > 1 ? 's' : ''}
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {projects.length === 0 ? (
           <Card className="border-dashed">
