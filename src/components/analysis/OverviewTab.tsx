@@ -13,6 +13,8 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
   const [accountInfo, setAccountInfo] = useState<any>({});
   const [monthlyData, setMonthlyData] = useState<any[]>([]);
   const [topCounterparties, setTopCounterparties] = useState<{ credit: any[], debit: any[] }>({ credit: [], debit: [] });
+  const [currency, setCurrency] = useState<string>('USD');
+  const currencySymbol = currency === 'INR' ? '₹' : currency === 'GBP' ? '£' : currency === 'EUR' ? '€' : '$';
 
   useEffect(() => {
     loadData();
@@ -32,6 +34,7 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
       }
 
       const statementIds = statements.map(s => s.id);
+      setCurrency(statements[0]?.currency || 'USD');
 
       // Fetch all transactions
       const { data: transactions } = await supabase
@@ -180,7 +183,7 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="month" />
                 <YAxis />
-                <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} />
+                <Tooltip formatter={(value: number) => `${currencySymbol}${value.toLocaleString()}`} />
                 <Line type="monotone" dataKey="netCashFlow" stroke="hsl(var(--primary))" strokeWidth={2} name="Net Cash Flow" />
                 <Line type="monotone" dataKey="netBizFlow" stroke="hsl(var(--chart-2))" strokeWidth={2} name="Net Business Flow" />
               </LineChart>
@@ -198,7 +201,7 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="month" />
                 <YAxis />
-                <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} />
+                <Tooltip formatter={(value: number) => `${currencySymbol}${value.toLocaleString()}`} />
                 <Bar dataKey="avgBalance" fill="hsl(var(--chart-3))" name="Avg Balance" />
               </BarChart>
             </ResponsiveContainer>
@@ -217,7 +220,7 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
                 <thead>
                   <tr className="border-b">
                     <th className="text-left py-2">Counterparty</th>
-                    <th className="text-right py-2">Amount (₹)</th>
+                    <th className="text-right py-2">Amount ({currencySymbol})</th>
                     <th className="text-right py-2">Amount %</th>
                     <th className="text-right py-2">Txn Count</th>
                     <th className="text-right py-2">Txn %</th>
@@ -227,7 +230,7 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
                   {topCounterparties.credit.map((cp, idx) => (
                     <tr key={idx} className="border-b">
                       <td className="py-2">{cp.name}</td>
-                      <td className="text-right">{cp.amount.toLocaleString()}</td>
+                      <td className="text-right">{currencySymbol}{cp.amount.toLocaleString()}</td>
                       <td className="text-right">{cp.percentage}%</td>
                       <td className="text-right">{cp.txnCount}</td>
                       <td className="text-right">{cp.txnPercentage}%</td>
@@ -249,7 +252,7 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
                 <thead>
                   <tr className="border-b">
                     <th className="text-left py-2">Counterparty</th>
-                    <th className="text-right py-2">Amount (₹)</th>
+                    <th className="text-right py-2">Amount ({currencySymbol})</th>
                     <th className="text-right py-2">Amount %</th>
                     <th className="text-right py-2">Txn Count</th>
                     <th className="text-right py-2">Txn %</th>
@@ -259,7 +262,7 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
                   {topCounterparties.debit.map((cp, idx) => (
                     <tr key={idx} className="border-b">
                       <td className="py-2">{cp.name}</td>
-                      <td className="text-right">{cp.amount.toLocaleString()}</td>
+                      <td className="text-right">{currencySymbol}{cp.amount.toLocaleString()}</td>
                       <td className="text-right">{cp.percentage}%</td>
                       <td className="text-right">{cp.txnCount}</td>
                       <td className="text-right">{cp.txnPercentage}%</td>

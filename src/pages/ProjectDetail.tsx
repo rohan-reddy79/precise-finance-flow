@@ -35,6 +35,8 @@ const ProjectDetail = () => {
   const [generatingReport, setGeneratingReport] = useState(false);
   const [generatingPredictions, setGeneratingPredictions] = useState(false);
   const [reprocessing, setReprocessing] = useState<string | null>(null);
+  const [currency, setCurrency] = useState<string>('USD');
+  const currencySymbol = currency === 'INR' ? '₹' : currency === 'GBP' ? '£' : currency === 'EUR' ? '€' : '$';
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -67,6 +69,7 @@ const ProjectDetail = () => {
 
       if (statementsError) throw statementsError;
       setStatements(statementsData || []);
+      setCurrency((statementsData && statementsData[0]?.currency) || 'USD');
     } catch (error: any) {
       toast({
         title: "Error loading project",
@@ -210,7 +213,7 @@ const ProjectDetail = () => {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
-                ${statements.reduce((sum, s) => sum + parseFloat(s.total_amount?.toString() || "0"), 0).toFixed(2)}
+                {currencySymbol}{statements.reduce((sum, s) => sum + parseFloat(s.total_amount?.toString() || "0"), 0).toFixed(2)}
               </div>
               <p className="text-xs text-muted-foreground">Total processed</p>
             </CardContent>
@@ -245,7 +248,7 @@ const ProjectDetail = () => {
               <CardHeader>
                 <CardTitle>Upload Bank Statements</CardTitle>
                 <CardDescription>
-                  Upload up to 12 bank statements in CSV or XLSX format
+                  Upload up to 12 bank statements in PDF, CSV or XLSX format
                 </CardDescription>
               </CardHeader>
               <CardContent>
