@@ -1,69 +1,156 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Download } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 interface SummaryTabProps {
   projectId: string;
 }
 
 const SummaryTab = ({ projectId }: SummaryTabProps) => {
-  const months = ["Jan 2020", "Feb 2020", "Mar 2020", "Apr 2020", "May 2020", "Jun 2020", 
-                  "Jul 2020", "Aug 2020", "Sep 2020", "Oct 2020", "Nov 2020", "Dec 2020"];
-  
-  const metrics = [
-    "Opening Balance", "Total Inflow Amount", "Total Outflow Amount", "Closing Balance",
-    "Total Inflow Counts", "Total Outflow Counts", "Max Balance", "Min Balance",
-    "Average Balance", "Business Credit Counts", "Total Business Credit Amount",
-    "Business Debit Counts", "Total Business Debit Amount", "ECS Return Counts",
-    "Loan Credit", "Loan Credit Count", "Loan EMI Outflow", "Loan EMI Outflow Count",
-    "Fixed Obligations (EMIs + Other Recurring)", "FOIR Score", "ECS/NACH Issued Counts",
-    "ECS/NACH Issued", "CASH Credit Counts", "Total CASH Credit Amount",
-    "CASH Debit Counts", "Total CASH Debit Amount", "Cheque Deposits Count",
-    "Total Cheque Deposits Amount", "Cheque Issues Count", "Total Cheque Issues Amount"
-  ];
+  const [loading, setLoading] = useState(true);
+  const [summary, setSummary] = useState({
+    totalTransactions: 0,
+    totalCredit: 0,
+    totalDebit: 0,
+    netFlow: 0,
+    startDate: '',
+    endDate: '',
+    currency: 'USD',
+  });
+
+  useEffect(() => {
+    loadSummary();
+  }, [projectId]);
+
+  const loadSummary = async () => {
+    try {
+      // Get statements for this project
+      const { data: statements } = await supabase
+        .from('bank_statements')
+        .select('*')
+        .eq('project_id', projectId);
+
+      if (!statements || statements.length === 0) {
+        setLoading(false);
+        return;
+      }
+
+      const statementIds = statements.map(s => s.id);
+      const currency = statements[0]?.currency || 'USD';
+
+      // Fetch all transactions
+      const { data: transactions } = await supabase
+        .from('transactions')
+        .select('*')
+        .in('statement_id', statementIds);
+
+      if (!transactions || transactions.length === 0) {
+        setLoading(false);
+        return;
+      }
+
+      // Calculate totals
+      const totalCredit = transactions
+        .filter(t => !t.is_debit)
+        .reduce((sum, t) => sum + parseFloat(t.amount.toString()), 0);
+
+      const totalDebit = transactions
+        .filter(t => t.is_debit)
+        .reduce((sum, t) => sum + parseFloat(t.amount.toString()), 0);
+
+      const dates = transactions.map(t => new Date(t.transaction_date)).sort((a, b) => a.getTime() - b.getTime());
+
+      setSummary({
+        totalTransactions: transactions.length,
+        totalCredit,
+        totalDebit,
+        netFlow: totalCredit - totalDebit,
+        startDate: dates[0]?.toLocaleDateString() || '',
+        endDate: dates[dates.length - 1]?.toLocaleDateString() || '',
+        currency,
+      });
+
+      setLoading(false);
+    } catch (error) {
+      console.error('Error loading summary:', error);
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold">Overall Summary</h2>
-        <Button variant="outline" size="sm">
-          <Download className="h-4 w-4 mr-2" />
-          Export to Excel
-        </Button>
-      </div>
+    <div className="space-y-6">
+      <h2 className="text-2xl font-bold">Financial Summary</h2>
+      
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground">Total Transactions</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-2xl font-bold">{summary.totalTransactions.toLocaleString()}</p>
+          </CardContent>
+        </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Monthly Breakdown</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs border-collapse">
-              <thead>
-                <tr className="border-b">
-                  <th className="text-left p-2 sticky left-0 bg-card">Description</th>
-                  {months.map((month, idx) => (
-                    <th key={idx} className="text-right p-2 whitespace-nowrap">{month}</th>
-                  ))}
-                  <th className="text-right p-2 font-bold">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {metrics.map((metric, idx) => (
-                  <tr key={idx} className="border-b hover:bg-muted/50">
-                    <td className="p-2 sticky left-0 bg-card font-medium">{metric}</td>
-                    {months.map((_, midx) => (
-                      <td key={midx} className="text-right p-2">-</td>
-                    ))}
-                    <td className="text-right p-2 font-semibold">-</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground">Total Credits</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-2xl font-bold text-green-600">
+              {summary.currency === 'INR' ? '₹' : '$'}{summary.totalCredit.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground">Total Debits</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-2xl font-bold text-red-600">
+              {summary.currency === 'INR' ? '₹' : '$'}{summary.totalDebit.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground">Net Flow</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className={`text-2xl font-bold ${summary.netFlow >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              {summary.currency === 'INR' ? '₹' : '$'}{summary.netFlow.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground">Period Start</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-lg font-semibold">{summary.startDate || 'N/A'}</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground">Period End</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-lg font-semibold">{summary.endDate || 'N/A'}</p>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 };

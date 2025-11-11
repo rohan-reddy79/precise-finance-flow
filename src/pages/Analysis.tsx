@@ -37,6 +37,8 @@ const Analysis = () => {
   const { toast } = useToast();
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
+  const [hasProcessedData, setHasProcessedData] = useState(true);
+  const [processingStatements, setProcessingStatements] = useState(0);
   
   const activeTab = searchParams.get("tab") || "overview";
 
@@ -60,6 +62,21 @@ const Analysis = () => {
 
       if (error) throw error;
       setProject(data);
+
+      // Check if we have processed data
+      const { data: statements } = await supabase
+        .from("bank_statements")
+        .select("processing_status, total_transactions")
+        .eq("project_id", projectId);
+
+      if (statements) {
+        const completed = statements.filter(s => s.processing_status === 'completed');
+        const processing = statements.filter(s => s.processing_status === 'processing' || s.processing_status === 'pending');
+        const totalTransactions = completed.reduce((sum, s) => sum + (s.total_transactions || 0), 0);
+        
+        setHasProcessedData(totalTransactions > 0);
+        setProcessingStatements(processing.length);
+      }
     } catch (error: any) {
       toast({
         title: "Error",
@@ -97,6 +114,29 @@ const Analysis = () => {
       </div>
 
       <div className="container mx-auto px-4 py-6">
+        {!hasProcessedData && (
+          <div className="mb-6 p-4 border border-yellow-500/50 bg-yellow-500/10 rounded-lg">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold text-foreground">No Processed Data Yet</h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {processingStatements > 0 
+                    ? `${processingStatements} statement(s) are currently being processed. Please refresh in a moment.`
+                    : 'Upload bank statements to see analysis data here.'}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => navigate(`/projects/${projectId}`)}>
+                  View Statements
+                </Button>
+                <Button variant="outline" size="sm" onClick={loadProject}>
+                  Refresh
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+        
         {activeTab === "overview" && <OverviewTab projectId={projectId!} />}
         {activeTab === "summary" && <SummaryTab projectId={projectId!} />}
         {activeTab === "transactions" && <TransactionsTab projectId={projectId!} />}

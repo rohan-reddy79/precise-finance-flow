@@ -230,27 +230,47 @@ Deno.serve(async (req) => {
       timestamp: new Date().toISOString()
     });
 
-    // Update status to failed if we have statementId
-    try {
-      const { statementId } = await req.json();
-      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-      const supabase = createClient(supabaseUrl, supabaseKey);
+    // Update status to failed with detailed error
+    let errorMessage = 'Processing failed';
+    if (error instanceof Error) {
+      if (error.message === 'STATEMENT_ERROR') errorMessage = 'Could not access bank statement';
+      else if (error.message === 'FILE_DOWNLOAD_ERROR') errorMessage = 'Failed to download file from storage';
+      else if (error.message === 'INVALID_FILE_SIGNATURE') errorMessage = 'Invalid file format or corrupted file';
+      else if (error.message === 'UNSUPPORTED_FILE_TYPE') errorMessage = 'Unsupported file type';
+      else if (error.message === 'EMPTY_FILE') errorMessage = 'No transactions found in the file';
+      else if (error.message === 'FILE_TOO_LARGE') errorMessage = 'File size exceeds 10MB limit';
+      else if (error.message === 'TOO_MANY_ROWS') errorMessage = 'File contains too many rows (max 10,000)';
+      else if (error.message === 'INSERT_ERROR') errorMessage = 'Failed to save transactions to database';
+      else errorMessage = error.message;
+    }
 
-      await supabase
-        .from('bank_statements')
-        .update({
-          processing_status: 'failed',
-          parsing_errors: 'Processing failed',
-        })
-        .eq('id', statementId);
+    // Try to update statement status
+    try {
+      const requestBody = await req.clone().json();
+      const statementId = requestBody.statementId;
+      
+      if (statementId) {
+        const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+        const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+        const supabase = createClient(supabaseUrl, supabaseKey);
+
+        await supabase
+          .from('bank_statements')
+          .update({
+            processing_status: 'failed',
+            parsing_errors: errorMessage,
+          })
+          .eq('id', statementId);
+        
+        console.log(`Updated statement ${statementId} status to failed: ${errorMessage}`);
+      }
     } catch (updateError) {
       console.error('Failed to update error status:', updateError);
     }
 
     return new Response(
       JSON.stringify({
-        error: 'Processing failed',
+        error: errorMessage,
         code: ErrorCodes.PROCESSING_FAILED
       }),
       {
@@ -404,17 +424,17 @@ async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency
     
     // Parse transactions from text
     const transactions = parseTransactionsFromText(text);
-    
-    console.log(`Extracted ${transactions.length} transactions from PDF`);
+    console.log('Extracted', transactions.length, 'transactions');
     
     if (transactions.length === 0) {
-      throw new Error('No valid transactions found in PDF. Please check the file format.');
+      console.log('No transactions found. Text preview:', text.slice(0, 200));
+      throw new Error('No transactions found in PDF. The file may have an unsupported format.');
     }
     
     return { transactions, currency: detectedCurrency };
   } catch (error) {
     console.error('PDF parsing error:', error);
-    throw new Error(`PDF parsing failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw error;
   }
 }
 

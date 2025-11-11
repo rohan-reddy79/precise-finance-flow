@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Download, Filter } from "lucide-react";
+import { Download, Filter, Loader2 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface TransactionsTabProps {
@@ -12,25 +13,71 @@ interface TransactionsTabProps {
 
 const TransactionsTab = ({ projectId }: TransactionsTabProps) => {
   const [filter, setFilter] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const transactions = [
-    { id: 1, date: "2024-01-15", description: "Salary Credit", counterParty: "ABC Corp", credit: 50000, debit: 0, balance: 75000, category: "Income", tags: ["Salary"], refNum: "REF123" },
-    { id: 2, date: "2024-01-16", description: "Rent Payment", counterParty: "Landlord", credit: 0, debit: 20000, balance: 55000, category: "Expense", tags: ["Rent"], refNum: "CHQ456" },
-    { id: 3, date: "2024-01-17", description: "Utility Bill", counterParty: "Power Co", credit: 0, debit: 2000, balance: 53000, category: "Utilities", tags: ["Bills"], refNum: "NEFT789" },
-  ];
+  useEffect(() => {
+    loadTransactions();
+  }, [projectId]);
+
+  const loadTransactions = async () => {
+    try {
+      // Get statement IDs for this project
+      const { data: statements } = await supabase
+        .from('bank_statements')
+        .select('id')
+        .eq('project_id', projectId);
+
+      if (!statements || statements.length === 0) {
+        setTransactions([]);
+        setLoading(false);
+        return;
+      }
+
+      const statementIds = statements.map(s => s.id);
+
+      // Fetch transactions
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('*')
+        .in('statement_id', statementIds)
+        .order('transaction_date', { ascending: false })
+        .limit(100);
+
+      if (error) throw error;
+      setTransactions(data || []);
+    } catch (error) {
+      console.error('Error loading transactions:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filteredTransactions = transactions.filter(txn => {
+    const matchesSearch = filter === "" || 
+      txn.description.toLowerCase().includes(filter.toLowerCase()) ||
+      (txn.merchant && txn.merchant.toLowerCase().includes(filter.toLowerCase()));
+    const matchesCategory = categoryFilter === "all" || txn.category === categoryFilter;
+    return matchesSearch && matchesCategory;
+  });
 
   const preDefinedFilters = ["Cash transactions", "Cheque", "High value debit txns", "High value credit txns"];
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center flex-wrap gap-2">
         <h2 className="text-2xl font-bold">All Transactions</h2>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm">
-            <Filter className="h-4 w-4 mr-2" />
-            Filter
-          </Button>
-          <Button variant="outline" size="sm">
+          <Button variant="outline" size="sm" disabled>
             <Download className="h-4 w-4 mr-2" />
             Export
           </Button>
@@ -41,55 +88,68 @@ const TransactionsTab = ({ projectId }: TransactionsTabProps) => {
         <Card className="lg:col-span-3">
           <CardHeader>
             <div className="flex items-center gap-4">
-              <Input placeholder="Search transactions..." className="max-w-sm" />
-              <Select>
+              <Input 
+                placeholder="Search transactions..." 
+                className="max-w-sm"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+              />
+              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
                 <SelectTrigger className="w-[180px]">
                   <SelectValue placeholder="Category" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Categories</SelectItem>
-                  <SelectItem value="income">Income</SelectItem>
-                  <SelectItem value="expense">Expense</SelectItem>
-                  <SelectItem value="utilities">Utilities</SelectItem>
+                  <SelectItem value="Salary">Salary</SelectItem>
+                  <SelectItem value="Utilities">Utilities</SelectItem>
+                  <SelectItem value="Food">Food</SelectItem>
+                  <SelectItem value="Shopping">Shopping</SelectItem>
+                  <SelectItem value="Transport">Transport</SelectItem>
+                  <SelectItem value="Entertainment">Entertainment</SelectItem>
+                  <SelectItem value="Healthcare">Healthcare</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           </CardHeader>
           <CardContent>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b">
-                    <th className="text-left p-2">S No</th>
-                    <th className="text-left p-2">Date</th>
-                    <th className="text-left p-2">Description</th>
-                    <th className="text-left p-2">CounterParty</th>
-                    <th className="text-right p-2">Credit (₹)</th>
-                    <th className="text-right p-2">Debit (₹)</th>
-                    <th className="text-right p-2">Balance (₹)</th>
-                    <th className="text-left p-2">Category</th>
-                    <th className="text-left p-2">Ref Num</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {transactions.map((txn) => (
-                    <tr key={txn.id} className="border-b hover:bg-muted/50">
-                      <td className="p-2">{txn.id}</td>
-                      <td className="p-2">{txn.date}</td>
-                      <td className="p-2">{txn.description}</td>
-                      <td className="p-2">{txn.counterParty}</td>
-                      <td className="text-right p-2 text-green-600">{txn.credit > 0 ? txn.credit.toLocaleString() : "-"}</td>
-                      <td className="text-right p-2 text-red-600">{txn.debit > 0 ? txn.debit.toLocaleString() : "-"}</td>
-                      <td className="text-right p-2 font-semibold">{txn.balance.toLocaleString()}</td>
-                      <td className="p-2">
-                        <Badge variant="outline">{txn.category}</Badge>
-                      </td>
-                      <td className="p-2 text-xs text-muted-foreground">{txn.refNum}</td>
+            {filteredTransactions.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                No transactions found
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="text-left p-2">Date</th>
+                      <th className="text-left p-2">Description</th>
+                      <th className="text-left p-2">Merchant</th>
+                      <th className="text-right p-2">Credit</th>
+                      <th className="text-right p-2">Debit</th>
+                      <th className="text-left p-2">Category</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {filteredTransactions.map((txn, idx) => (
+                      <tr key={txn.id} className="border-b hover:bg-muted/50">
+                        <td className="p-2">{new Date(txn.transaction_date).toLocaleDateString()}</td>
+                        <td className="p-2">{txn.description}</td>
+                        <td className="p-2 text-muted-foreground">{txn.merchant || '-'}</td>
+                        <td className="text-right p-2 text-green-600">
+                          {!txn.is_debit ? `₹${parseFloat(txn.amount).toLocaleString()}` : "-"}
+                        </td>
+                        <td className="text-right p-2 text-red-600">
+                          {txn.is_debit ? `₹${parseFloat(txn.amount).toLocaleString()}` : "-"}
+                        </td>
+                        <td className="p-2">
+                          <Badge variant="outline">{txn.category || 'Uncategorized'}</Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </CardContent>
         </Card>
 
