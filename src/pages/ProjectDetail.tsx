@@ -24,6 +24,7 @@ interface BankStatement {
   processing_status: string;
   total_transactions: number;
   total_amount: number;
+  parsing_errors?: string | null;
 }
 
 const ProjectDetail = () => {
@@ -33,6 +34,7 @@ const ProjectDetail = () => {
   const [loading, setLoading] = useState(true);
   const [generatingReport, setGeneratingReport] = useState(false);
   const [generatingPredictions, setGeneratingPredictions] = useState(false);
+  const [reprocessing, setReprocessing] = useState<string | null>(null);
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -121,6 +123,35 @@ const ProjectDetail = () => {
       });
     } finally {
       setGeneratingPredictions(false);
+    }
+  };
+
+  const reprocessStatement = async (statementId: string) => {
+    setReprocessing(statementId);
+    try {
+      const { error } = await supabase.functions.invoke('process-bank-statement', {
+        body: { statementId }
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: "Reprocessing started",
+        description: "Statement is being reprocessed",
+      });
+
+      // Reload after a delay
+      setTimeout(() => {
+        loadProject();
+      }, 2000);
+    } catch (error: any) {
+      toast({
+        title: "Reprocessing failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setReprocessing(null);
     }
   };
 
@@ -238,18 +269,40 @@ const ProjectDetail = () => {
                         key={statement.id}
                         className="flex items-center justify-between p-4 border rounded-lg"
                       >
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-3 flex-1">
                           <FileText className="h-5 w-5 text-muted-foreground" />
-                          <div>
+                          <div className="flex-1">
                             <p className="font-medium">{statement.file_name}</p>
-                            <p className="text-sm text-muted-foreground">
-                              {statement.total_transactions} transactions • $
-                              {parseFloat(statement.total_amount?.toString() || "0").toFixed(2)}
-                            </p>
+                            <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                              <span>Status: <span className={
+                                statement.processing_status === 'completed' ? 'text-green-600' :
+                                statement.processing_status === 'failed' ? 'text-red-600' :
+                                'text-yellow-600'
+                              }>{statement.processing_status}</span></span>
+                              {statement.processing_status === 'completed' && (
+                                <span>{statement.total_transactions} transactions</span>
+                              )}
+                            </div>
+                            {statement.parsing_errors && (
+                              <p className="text-sm text-red-600 mt-1">Error: {statement.parsing_errors}</p>
+                            )}
                           </div>
                         </div>
-                        <div className="text-sm text-muted-foreground">
-                          {new Date(statement.upload_date).toLocaleDateString()}
+                        <div className="flex items-center gap-3">
+                          {(statement.processing_status === 'failed' || statement.processing_status === 'pending') && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => reprocessStatement(statement.id)}
+                              disabled={reprocessing === statement.id}
+                            >
+                              {reprocessing === statement.id && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                              Reprocess
+                            </Button>
+                          )}
+                          <div className="text-sm text-muted-foreground">
+                            {new Date(statement.upload_date).toLocaleDateString()}
+                          </div>
                         </div>
                       </div>
                     ))}

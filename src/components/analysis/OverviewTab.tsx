@@ -20,42 +20,100 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
 
   const loadData = async () => {
     try {
-      // Load account info and analysis data
+      // Get statement IDs for this project
       const { data: statements } = await supabase
-        .from("bank_statements")
-        .select("*")
-        .eq("project_id", projectId)
-        .limit(1)
-        .single();
+        .from('bank_statements')
+        .select('*')
+        .eq('project_id', projectId);
 
-      if (statements) {
-        setAccountInfo({});
+      if (!statements || statements.length === 0) {
+        setLoading(false);
+        return;
       }
 
-      // Mock monthly data for charts
-      setMonthlyData([
-        { month: "Jan", netCashFlow: 15000, netBizFlow: 12000, avgBalance: 50000 },
-        { month: "Feb", netCashFlow: 18000, netBizFlow: 15000, avgBalance: 55000 },
-        { month: "Mar", netCashFlow: 16000, netBizFlow: 13000, avgBalance: 52000 },
-        { month: "Apr", netCashFlow: 20000, netBizFlow: 17000, avgBalance: 60000 },
-        { month: "May", netCashFlow: 19000, netBizFlow: 16000, avgBalance: 58000 },
-        { month: "Jun", netCashFlow: 21000, netBizFlow: 18000, avgBalance: 62000 },
-      ]);
+      const statementIds = statements.map(s => s.id);
 
-      // Mock top counterparties
-      setTopCounterparties({
-        credit: [
-          { name: "ABC Corp", amount: 50000, percentage: 25, txnCount: 12, txnPercentage: 20 },
-          { name: "XYZ Ltd", amount: 40000, percentage: 20, txnCount: 10, txnPercentage: 16 },
-          { name: "Client A", amount: 30000, percentage: 15, txnCount: 8, txnPercentage: 13 },
-        ],
-        debit: [
-          { name: "Vendor 1", amount: 35000, percentage: 30, txnCount: 15, txnPercentage: 25 },
-          { name: "Supplier B", amount: 25000, percentage: 21, txnCount: 10, txnPercentage: 16 },
-          { name: "Rent", amount: 20000, percentage: 17, txnCount: 6, txnPercentage: 10 },
-        ],
+      // Fetch all transactions
+      const { data: transactions } = await supabase
+        .from('transactions')
+        .select('*')
+        .in('statement_id', statementIds);
+
+      if (!transactions || transactions.length === 0) {
+        setLoading(false);
+        return;
+      }
+
+      // Calculate monthly aggregates
+      const monthlyMap = new Map<string, { credit: number, debit: number }>();
+      transactions.forEach(txn => {
+        const date = new Date(txn.transaction_date);
+        const monthKey = date.toLocaleString('default', { month: 'short' });
+        
+        if (!monthlyMap.has(monthKey)) {
+          monthlyMap.set(monthKey, { credit: 0, debit: 0 });
+        }
+        
+        const monthly = monthlyMap.get(monthKey)!;
+        if (txn.is_debit) {
+          monthly.debit += parseFloat(txn.amount.toString());
+        } else {
+          monthly.credit += parseFloat(txn.amount.toString());
+        }
       });
 
+      const monthlyDataArray = Array.from(monthlyMap.entries()).map(([month, data]) => ({
+        month,
+        netCashFlow: data.credit - data.debit,
+        netBizFlow: data.credit - data.debit,
+        avgBalance: data.credit,
+      }));
+
+      setMonthlyData(monthlyDataArray);
+
+      // Calculate top counterparties
+      const creditCounterparties = new Map<string, { amount: number, count: number }>();
+      const debitCounterparties = new Map<string, { amount: number, count: number }>();
+
+      transactions.forEach(txn => {
+        if (!txn.merchant) return;
+        
+        const map = txn.is_debit ? debitCounterparties : creditCounterparties;
+        if (!map.has(txn.merchant)) {
+          map.set(txn.merchant, { amount: 0, count: 0 });
+        }
+        const entry = map.get(txn.merchant)!;
+        entry.amount += parseFloat(txn.amount.toString());
+        entry.count += 1;
+      });
+
+      const totalCredit = transactions.filter(t => !t.is_debit).reduce((sum, t) => sum + parseFloat(t.amount.toString()), 0);
+      const totalDebit = transactions.filter(t => t.is_debit).reduce((sum, t) => sum + parseFloat(t.amount.toString()), 0);
+      const totalTxns = transactions.length;
+
+      const creditTop = Array.from(creditCounterparties.entries())
+        .sort((a, b) => b[1].amount - a[1].amount)
+        .slice(0, 10)
+        .map(([name, data]) => ({
+          name,
+          amount: data.amount,
+          percentage: totalCredit > 0 ? Math.round((data.amount / totalCredit) * 100) : 0,
+          txnCount: data.count,
+          txnPercentage: totalTxns > 0 ? Math.round((data.count / totalTxns) * 100) : 0,
+        }));
+
+      const debitTop = Array.from(debitCounterparties.entries())
+        .sort((a, b) => b[1].amount - a[1].amount)
+        .slice(0, 10)
+        .map(([name, data]) => ({
+          name,
+          amount: data.amount,
+          percentage: totalDebit > 0 ? Math.round((data.amount / totalDebit) * 100) : 0,
+          txnCount: data.count,
+          txnPercentage: totalTxns > 0 ? Math.round((data.count / totalTxns) * 100) : 0,
+        }));
+
+      setTopCounterparties({ credit: creditTop, debit: debitTop });
       setLoading(false);
     } catch (error) {
       console.error("Error loading overview data:", error);
