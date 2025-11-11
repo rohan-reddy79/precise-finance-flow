@@ -95,9 +95,13 @@ const ProjectDetail = () => {
         description: "Your financial analysis report is ready",
       });
     } catch (error: any) {
+      const errorMessage = error.message?.includes('INSUFFICIENT_DATA') 
+        ? 'No processed data available. Please upload and process statements first.'
+        : error.message || 'Failed to generate report';
+      
       toast({
         title: "Error generating report",
-        description: error.message,
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {
@@ -248,7 +252,7 @@ const ProjectDetail = () => {
               <CardHeader>
                 <CardTitle>Upload Bank Statements</CardTitle>
                 <CardDescription>
-                  Upload up to 12 bank statements in PDF, CSV or XLSX format
+                  Upload up to 12 bank statements in CSV or Excel format
                 </CardDescription>
               </CardHeader>
               <CardContent>

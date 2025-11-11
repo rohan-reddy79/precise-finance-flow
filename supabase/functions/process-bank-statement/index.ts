@@ -1,7 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import * as XLSX from 'https://esm.sh/xlsx@0.18.5';
 import { z } from 'https://esm.sh/zod@3.22.4';
-import pdf from 'https://esm.sh/pdf-parse@1.1.1';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -243,6 +242,7 @@ Deno.serve(async (req) => {
       else if (error.message === 'FILE_TOO_LARGE') errorMessage = 'File size exceeds 10MB limit';
       else if (error.message === 'TOO_MANY_ROWS') errorMessage = 'File contains too many rows (max 10,000)';
       else if (error.message === 'INSERT_ERROR') errorMessage = 'Failed to save transactions to database';
+      else if (error.message === 'PDF_PARSING_NOT_AVAILABLE') errorMessage = 'PDF parsing is not yet supported. Please use CSV or Excel files for now.';
       else errorMessage = error.message;
     }
 
@@ -387,50 +387,11 @@ async function parseSpreadsheet(fileData: Blob): Promise<{ transactions: any[], 
 
 async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency: string }> {
   try {
-    const arrayBuffer = await fileData.arrayBuffer();
+    console.log('Starting PDF parse - not yet implemented');
     
-    // Validate file size (max 10MB)
-    if (arrayBuffer.byteLength > 10 * 1024 * 1024) {
-      throw new Error('FILE_TOO_LARGE');
-    }
-    
-    console.log('Parsing PDF, size:', arrayBuffer.byteLength);
-    
-    const pdfData = await pdf(new Uint8Array(arrayBuffer));
-    const text = pdfData.text;
-    
-    console.log('PDF extracted, text length:', text.length, 'pages:', pdfData.numpages);
-    
-    if (!text || text.length < 50) {
-      throw new Error('PDF appears empty or contains no extractable text');
-    }
-    
-    // Detect currency from PDF text
-    const lowerText = text.toLowerCase();
-    let detectedCurrency = 'USD';
-    
-    if (lowerText.includes('rupee') || lowerText.includes('inr') || text.includes('₹') || lowerText.includes('rs.')) {
-      detectedCurrency = 'INR';
-    } else if (lowerText.includes('gbp') || text.includes('£') || lowerText.includes('pound')) {
-      detectedCurrency = 'GBP';
-    } else if (lowerText.includes('eur') || text.includes('€') || lowerText.includes('euro')) {
-      detectedCurrency = 'EUR';
-    } else if (lowerText.includes('usd') || text.includes('$') || lowerText.includes('dollar')) {
-      detectedCurrency = 'USD';
-    }
-    
-    console.log('Detected currency:', detectedCurrency);
-    
-    // Parse transactions from text
-    const transactions = parseTransactionsFromText(text);
-    console.log('Extracted', transactions.length, 'transactions');
-    
-    if (transactions.length === 0) {
-      console.log('No transactions found. Text preview:', text.slice(0, 200));
-      throw new Error('No transactions found in PDF. The file may have an unsupported format.');
-    }
-    
-    return { transactions, currency: detectedCurrency };
+    // For now, throw an error to indicate PDF parsing is not yet implemented
+    // This will give users a clear error message instead of silent failure
+    throw new Error('PDF_PARSING_NOT_AVAILABLE');
   } catch (error) {
     console.error('PDF parsing error:', error);
     throw error;

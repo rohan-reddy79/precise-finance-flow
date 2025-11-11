@@ -140,7 +140,11 @@ Deno.serve(async (req) => {
 
     if (!transactions || transactions.length === 0) {
       console.error('No transactions found:', { projectId, statementCount: statements.length });
-      return new Response(JSON.stringify({ error: 'INSUFFICIENT_DATA', code: 'E004' }), {
+      return new Response(JSON.stringify({ 
+        error: 'INSUFFICIENT_DATA', 
+        code: 'E004',
+        message: 'No processed transactions found. Please ensure your bank statements are uploaded and successfully processed before generating a report.'
+      }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
