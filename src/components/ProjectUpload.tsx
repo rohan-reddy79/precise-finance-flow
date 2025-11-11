@@ -43,6 +43,7 @@ const ProjectUpload = ({ projectId, onUploadComplete }: ProjectUploadProps) => {
 
     // Verify MIME types
     const validMimeTypes = [
+      'application/pdf',
       'text/csv',
       'application/vnd.ms-excel',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -52,7 +53,7 @@ const ProjectUpload = ({ projectId, onUploadComplete }: ProjectUploadProps) => {
     if (invalidMime.length > 0) {
       toast({
         title: "Invalid file type",
-        description: "Please upload CSV or Excel files only",
+        description: "Please upload PDF, CSV or Excel files only",
         variant: "destructive",
       });
       return;
@@ -61,13 +62,13 @@ const ProjectUpload = ({ projectId, onUploadComplete }: ProjectUploadProps) => {
     // Validate file extensions
     const validFiles = files.filter(file => {
       const ext = file.name.split('.').pop()?.toLowerCase();
-      return ext === 'csv' || ext === 'xlsx' || ext === 'xls';
+      return ext === 'pdf' || ext === 'csv' || ext === 'xlsx' || ext === 'xls';
     });
 
     if (validFiles.length !== files.length) {
       toast({
         title: "Invalid file format",
-        description: "Only CSV and XLSX files are supported",
+        description: "Only PDF, CSV and XLSX files are supported",
         variant: "destructive",
       });
       return;
@@ -158,7 +159,7 @@ const ProjectUpload = ({ projectId, onUploadComplete }: ProjectUploadProps) => {
       <div className="flex items-center gap-4">
         <Input
           type="file"
-          accept=".csv,.xlsx,.xls"
+          accept=".pdf,.csv,.xlsx,.xls"
           multiple
           onChange={handleFileSelect}
           disabled={uploading || selectedFiles.length >= 12}

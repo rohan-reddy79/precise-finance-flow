@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import * as XLSX from 'https://esm.sh/xlsx@0.18.5';
 import { z } from 'https://esm.sh/zod@3.22.4';
+import pdf from 'https://esm.sh/pdf-parse@1.1.1';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -122,8 +123,9 @@ Deno.serve(async (req) => {
     const isXlsx = bytes[0] === 0x50 && bytes[1] === 0x4B; // XLSX starts with PK (ZIP signature)
     const isXls = bytes[0] === 0xD0 && bytes[1] === 0xCF; // XLS starts with OLE2 signature
     const isCsv = bytes[0] >= 0x20 && bytes[0] <= 0x7E; // CSV starts with printable ASCII
+    const isPdf = bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46; // PDF starts with %PDF
     
-    if (!isXlsx && !isXls && !isCsv) {
+    if (!isXlsx && !isXls && !isCsv && !isPdf) {
       console.error('Invalid file signature detected:', { 
         firstBytes: Array.from(bytes.slice(0, 4)),
         fileType: statement.file_type 
@@ -131,7 +133,7 @@ Deno.serve(async (req) => {
       throw new Error('INVALID_FILE_SIGNATURE');
     }
 
-    console.log('File signature validated:', { isXlsx, isXls, isCsv });
+    console.log('File signature validated:', { isXlsx, isXls, isCsv, isPdf });
 
     // Parse based on file type
     let transactions: any[] = [];
@@ -143,7 +145,9 @@ Deno.serve(async (req) => {
       transactions = parseResult.transactions;
       currency = parseResult.currency;
     } else if (fileType === 'pdf' || fileType.includes('pdf')) {
-      transactions = await parsePDF(fileData);
+      const parseResult = await parsePDF(fileData);
+      transactions = parseResult.transactions;
+      currency = parseResult.currency;
     } else {
       console.error('Unsupported file type:', fileType);
       throw new Error('UNSUPPORTED_FILE_TYPE');
@@ -362,10 +366,161 @@ async function parseSpreadsheet(fileData: Blob): Promise<{ transactions: any[], 
   return { transactions, currency: detectedCurrency };
 }
 
-async function parsePDF(fileData: Blob): Promise<any[]> {
-  // For PDF parsing, we would need pdf-parse or similar
-  // For now, return an error suggesting CSV/XLSX format
-  throw new Error('PDF parsing not yet implemented. Please upload CSV or XLSX format.');
+async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency: string }> {
+  try {
+    const arrayBuffer = await fileData.arrayBuffer();
+    
+    // Validate file size (max 10MB)
+    if (arrayBuffer.byteLength > 10 * 1024 * 1024) {
+      throw new Error('FILE_TOO_LARGE');
+    }
+    
+    console.log('Parsing PDF, size:', arrayBuffer.byteLength);
+    
+    const pdfData = await pdf(new Uint8Array(arrayBuffer));
+    const text = pdfData.text;
+    
+    console.log('PDF extracted, text length:', text.length, 'pages:', pdfData.numpages);
+    
+    if (!text || text.length < 50) {
+      throw new Error('PDF appears empty or contains no extractable text');
+    }
+    
+    // Detect currency from PDF text
+    const lowerText = text.toLowerCase();
+    let detectedCurrency = 'USD';
+    
+    if (lowerText.includes('rupee') || lowerText.includes('inr') || text.includes('₹') || lowerText.includes('rs.')) {
+      detectedCurrency = 'INR';
+    } else if (lowerText.includes('gbp') || text.includes('£') || lowerText.includes('pound')) {
+      detectedCurrency = 'GBP';
+    } else if (lowerText.includes('eur') || text.includes('€') || lowerText.includes('euro')) {
+      detectedCurrency = 'EUR';
+    } else if (lowerText.includes('usd') || text.includes('$') || lowerText.includes('dollar')) {
+      detectedCurrency = 'USD';
+    }
+    
+    console.log('Detected currency:', detectedCurrency);
+    
+    // Parse transactions from text
+    const transactions = parseTransactionsFromText(text);
+    
+    console.log(`Extracted ${transactions.length} transactions from PDF`);
+    
+    if (transactions.length === 0) {
+      throw new Error('No valid transactions found in PDF. Please check the file format.');
+    }
+    
+    return { transactions, currency: detectedCurrency };
+  } catch (error) {
+    console.error('PDF parsing error:', error);
+    throw new Error(`PDF parsing failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+function parseTransactionsFromText(text: string): any[] {
+  const transactions: any[] = [];
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  
+  // Date patterns to match various formats
+  const datePatterns = [
+    /(\d{2}[\/\-\.]\d{2}[\/\-\.]\d{4})/,           // DD/MM/YYYY or DD-MM-YYYY
+    /(\d{2}\s+[A-Za-z]{3}\s+\d{4})/,               // DD MMM YYYY
+    /(\d{4}[\/\-]\d{2}[\/\-]\d{2})/                // YYYY-MM-DD
+  ];
+  
+  // Amount pattern - matches numbers with optional currency symbols
+  const amountPattern = /[₹$£€]?\s*[\d,]+\.?\d*/g;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    
+    // Skip header-like lines
+    if (line.toLowerCase().includes('date') && line.toLowerCase().includes('description')) {
+      continue;
+    }
+    if (line.toLowerCase().includes('opening balance') || line.toLowerCase().includes('closing balance')) {
+      continue;
+    }
+    
+    // Try to find a date in the line
+    let dateMatch = null;
+    let dateStr = '';
+    
+    for (const pattern of datePatterns) {
+      dateMatch = line.match(pattern);
+      if (dateMatch) {
+        dateStr = dateMatch[1];
+        break;
+      }
+    }
+    
+    if (!dateMatch) continue;
+    
+    // Extract amounts from the line
+    const amounts = line.match(amountPattern);
+    if (!amounts || amounts.length === 0) continue;
+    
+    // Extract description (text between date and amounts)
+    const dateIndex = line.indexOf(dateStr);
+    const firstAmountIndex = line.indexOf(amounts[0]);
+    let description = line.substring(dateIndex + dateStr.length, firstAmountIndex).trim();
+    
+    if (!description || description.length < 2) {
+      description = 'Unknown Transaction';
+    }
+    
+    // Parse amounts - typically last two are debit/credit or balance
+    const parsedAmounts = amounts.map(a => parseAmount(a)).filter(a => a > 0);
+    
+    if (parsedAmounts.length === 0) continue;
+    
+    // Determine if debit or credit based on column position or keywords
+    const isDebitKeyword = line.toLowerCase().includes('debit') || 
+                          line.toLowerCase().includes('withdrawal') ||
+                          line.toLowerCase().includes('payment');
+    const isCreditKeyword = line.toLowerCase().includes('credit') || 
+                           line.toLowerCase().includes('deposit');
+    
+    // Use the first significant amount found
+    let amount = parsedAmounts[0];
+    let isDebit = isDebitKeyword;
+    
+    // If we have exactly 2 amounts and no keywords, assume first is debit, second is credit
+    if (parsedAmounts.length >= 2 && !isDebitKeyword && !isCreditKeyword) {
+      // Check which amount appears first in the line
+      const firstAmountPos = line.indexOf(amounts[0]);
+      const secondAmountPos = line.indexOf(amounts[1]);
+      
+      if (parsedAmounts[0] > 0 && firstAmountPos < secondAmountPos) {
+        isDebit = true;
+      } else if (parsedAmounts[1] > 0) {
+        amount = parsedAmounts[1];
+        isDebit = false;
+      }
+    }
+    
+    try {
+      const transactionData = {
+        date: parseDate(dateStr),
+        description: sanitizeString(description),
+        amount: isDebit ? -Math.abs(amount) : Math.abs(amount),
+        is_debit: isDebit,
+      };
+      
+      // Validate transaction
+      const validationResult = TransactionSchema.safeParse(transactionData);
+      if (validationResult.success) {
+        transactions.push(validationResult.data);
+      } else {
+        console.log('Skipped invalid transaction:', transactionData, validationResult.error);
+      }
+    } catch (error) {
+      console.log('Error parsing transaction from line:', line, error);
+    }
+  }
+  
+  return transactions;
 }
 
 function parseDate(dateStr: string): string {
