@@ -27,8 +27,10 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  let statementIdRef: string | null = null;
   try {
     const { statementId } = await req.json();
+    statementIdRef = statementId;
     console.log('Processing statement:', statementId);
 
     // Authenticate user
@@ -246,10 +248,7 @@ Deno.serve(async (req) => {
 
     // Try to update statement status
     try {
-      const requestBody = await req.clone().json();
-      const statementId = requestBody.statementId;
-      
-      if (statementId) {
+      if (statementIdRef) {
         const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
         const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
         const supabase = createClient(supabaseUrl, supabaseKey);
@@ -260,9 +259,9 @@ Deno.serve(async (req) => {
             processing_status: 'failed',
             parsing_errors: errorMessage,
           })
-          .eq('id', statementId);
+          .eq('id', statementIdRef);
         
-        console.log(`Updated statement ${statementId} status to failed: ${errorMessage}`);
+        console.log(`Updated statement ${statementIdRef} status to failed: ${errorMessage}`);
       }
     } catch (updateError) {
       console.error('Failed to update error status:', updateError);
