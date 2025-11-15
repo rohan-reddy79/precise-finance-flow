@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, ArrowLeft, Upload, FileText, TrendingUp, BarChart3 } from "lucide-react";
+import { Loader2, ArrowLeft, Upload, FileText, TrendingUp, BarChart3, Trash2 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ProjectUpload from "@/components/ProjectUpload";
 import ProjectReport from "@/components/ProjectReport";
@@ -20,6 +20,7 @@ interface Project {
 interface BankStatement {
   id: string;
   file_name: string;
+  file_path: string;
   upload_date: string;
   processing_status: string;
   total_transactions: number;
@@ -162,6 +163,50 @@ const ProjectDetail = () => {
     }
   };
 
+  const deleteStatement = async (statement: BankStatement) => {
+    if (!confirm(`Delete "${statement.file_name}"? This will also delete all associated transactions.`)) {
+      return;
+    }
+
+    try {
+      // Delete file from storage
+      const { error: storageError } = await supabase.storage
+        .from('bank-statements')
+        .remove([statement.file_path]);
+
+      if (storageError) throw storageError;
+
+      // Delete transactions (will cascade via RLS)
+      const { error: transactionsError } = await supabase
+        .from('transactions')
+        .delete()
+        .eq('statement_id', statement.id);
+
+      if (transactionsError) throw transactionsError;
+
+      // Delete statement record
+      const { error: statementError } = await supabase
+        .from('bank_statements')
+        .delete()
+        .eq('id', statement.id);
+
+      if (statementError) throw statementError;
+
+      toast({
+        title: "Statement deleted",
+        description: "Bank statement and associated transactions removed",
+      });
+
+      loadProject();
+    } catch (error: any) {
+      toast({
+        title: "Deletion failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
   if (loading || !project) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -252,7 +297,7 @@ const ProjectDetail = () => {
               <CardHeader>
                 <CardTitle>Upload Bank Statements</CardTitle>
                 <CardDescription>
-                  Upload up to 12 bank statements in CSV or Excel format
+                  Upload up to 12 bank statements in CSV, Excel, or PDF format
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -307,6 +352,13 @@ const ProjectDetail = () => {
                               Reprocess
                             </Button>
                           )}
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onClick={() => deleteStatement(statement)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
                           <div className="text-sm text-muted-foreground">
                             {new Date(statement.upload_date).toLocaleDateString()}
                           </div>
