@@ -1,11 +1,13 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { useProjectCurrency } from "@/hooks/useProjectCurrency";
 
 interface ChequeReturnTabProps {
   projectId: string;
 }
 
 const ChequeReturnTab = ({ projectId }: ChequeReturnTabProps) => {
+  const { currencySymbol } = useProjectCurrency(projectId);
   const summary = {
     totalReturned: 3,
     totalReturnAmount: 45000,
@@ -41,19 +43,19 @@ const ChequeReturnTab = ({ projectId }: ChequeReturnTabProps) => {
         </Card>
         <Card>
           <CardContent className="p-4 text-center">
-            <div className="text-lg font-bold">₹{summary.totalReturnAmount.toLocaleString()}</div>
+            <div className="text-lg font-bold">{currencySymbol}{summary.totalReturnAmount.toLocaleString()}</div>
             <div className="text-xs text-muted-foreground mt-1">Total Amount</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 text-center">
-            <div className="text-lg font-bold">₹{summary.avgReturnAmount.toLocaleString()}</div>
+            <div className="text-lg font-bold">{currencySymbol}{summary.avgReturnAmount.toLocaleString()}</div>
             <div className="text-xs text-muted-foreground mt-1">Avg Return</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 text-center">
-            <div className="text-lg font-bold">₹{summary.maxReturnAmount.toLocaleString()}</div>
+            <div className="text-lg font-bold">{currencySymbol}{summary.maxReturnAmount.toLocaleString()}</div>
             <div className="text-xs text-muted-foreground mt-1">Max Return</div>
           </CardContent>
         </Card>
@@ -88,7 +90,7 @@ const ChequeReturnTab = ({ projectId }: ChequeReturnTabProps) => {
                 {returnedCheques.map((cheque, idx) => (
                   <tr key={idx} className="border-b hover:bg-muted/50">
                     <td className="p-2">{cheque.date}</td>
-                    <td className="text-right p-2 font-semibold text-red-600">₹{cheque.amount.toLocaleString()}</td>
+                    <td className="text-right p-2 font-semibold text-red-600">{currencySymbol}{cheque.amount.toLocaleString()}</td>
                     <td className="p-2">{cheque.party}</td>
                     <td className="p-2">{cheque.bank}</td>
                     <td className="p-2 font-mono text-xs">{cheque.chequeNum}</td>
@@ -96,7 +98,7 @@ const ChequeReturnTab = ({ projectId }: ChequeReturnTabProps) => {
                       <Badge variant="destructive" className="text-xs">{cheque.reason}</Badge>
                     </td>
                     <td className="p-2">{cheque.returnedBy}</td>
-                    <td className="text-right p-2">₹{cheque.penalty}</td>
+                    <td className="text-right p-2">{currencySymbol}{cheque.penalty}</td>
                   </tr>
                 ))}
               </tbody>

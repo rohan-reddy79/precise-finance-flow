@@ -36,6 +36,7 @@ const ProjectDetail = () => {
   const [generatingReport, setGeneratingReport] = useState(false);
   const [generatingPredictions, setGeneratingPredictions] = useState(false);
   const [reprocessing, setReprocessing] = useState<string | null>(null);
+  const [deletingAll, setDeletingAll] = useState(false);
   const [currency, setCurrency] = useState<string>('USD');
   const currencySymbol = currency === 'INR' ? '₹' : currency === 'GBP' ? '£' : currency === 'EUR' ? '€' : '$';
   const navigate = useNavigate();
@@ -204,6 +205,59 @@ const ProjectDetail = () => {
         description: error.message,
         variant: "destructive",
       });
+    }
+  };
+
+  const deleteAllFailed = async () => {
+    const failedStatements = statements.filter(s => s.processing_status === 'failed');
+    
+    if (failedStatements.length === 0) {
+      toast({
+        title: "No failed statements",
+        description: "There are no failed statements to delete",
+      });
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to delete all ${failedStatements.length} failed statements? This cannot be undone.`)) {
+      return;
+    }
+
+    setDeletingAll(true);
+    try {
+      for (const statement of failedStatements) {
+        // Delete file from storage
+        await supabase.storage
+          .from('bank-statements')
+          .remove([statement.file_path]);
+
+        // Delete associated transactions
+        await supabase
+          .from('transactions')
+          .delete()
+          .eq('statement_id', statement.id);
+
+        // Delete statement record
+        await supabase
+          .from('bank_statements')
+          .delete()
+          .eq('id', statement.id);
+      }
+
+      toast({
+        title: "Failed statements deleted",
+        description: `Successfully deleted ${failedStatements.length} failed statements`,
+      });
+
+      loadProject();
+    } catch (error: any) {
+      toast({
+        title: "Error deleting statements",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingAll(false);
     }
   };
 

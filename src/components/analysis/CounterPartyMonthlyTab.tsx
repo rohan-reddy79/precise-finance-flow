@@ -4,12 +4,14 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Download, Search } from "lucide-react";
+import { useProjectCurrency } from "@/hooks/useProjectCurrency";
 
 interface CounterPartyMonthlyTabProps {
   projectId: string;
 }
 
 const CounterPartyMonthlyTab = ({ projectId }: CounterPartyMonthlyTabProps) => {
+  const { currencySymbol } = useProjectCurrency(projectId);
   const [filter, setFilter] = useState("both");
   const [searchTerm, setSearchTerm] = useState("");
 
@@ -69,15 +71,15 @@ const CounterPartyMonthlyTab = ({ projectId }: CounterPartyMonthlyTabProps) => {
                   <th className="text-center p-2 border-l">...</th>
                 </tr>
                 <tr className="border-b text-muted-foreground">
-                  <th className="text-right p-2">Credit (₹)</th>
+                  <th className="text-right p-2">Credit ({currencySymbol})</th>
                   <th className="text-right p-2">Credit Txns</th>
-                  <th className="text-right p-2">Debit (₹)</th>
+                  <th className="text-right p-2">Debit ({currencySymbol})</th>
                   <th className="text-right p-2">Debit Txns</th>
                   {months.slice(0, 2).map((_, idx) => (
                     <>
-                      <th key={`c${idx}`} className="text-right p-2">Credit (₹)</th>
+                      <th key={`c${idx}`} className="text-right p-2">Credit ({currencySymbol})</th>
                       <th key={`ct${idx}`} className="text-right p-2">Txns</th>
-                      <th key={`d${idx}`} className="text-right p-2">Debit (₹)</th>
+                      <th key={`d${idx}`} className="text-right p-2">Debit ({currencySymbol})</th>
                       <th key={`dt${idx}`} className="text-right p-2">Txns</th>
                     </>
                   ))}

@@ -16,7 +16,7 @@ const IrregularitiesTab = ({ projectId }: IrregularitiesTabProps) => {
     { title: "Suspicious IMPS Transactions", count: 1, severity: "medium" },
     { title: "All RTGS/NEFT/CHQ/IMPS/ECS Return Transactions", count: 2, severity: "high" },
     { title: "NEFT Credit transactions on bank holiday", count: 0, severity: "medium" },
-    { title: "ATM WITHDRAWALS ABOVE ₹20,000", count: 4, severity: "low" },
+    { title: "ATM Withdrawals Above 20,000", count: 4, severity: "low" },
     { title: "ATM withdrawals without cash", count: 0, severity: "high" },
     { title: "ATM Deposit Above 2L", count: 0, severity: "high" },
     { title: "CASH transactions on bank holiday", count: 1, severity: "medium" },

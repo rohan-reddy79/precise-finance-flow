@@ -3,12 +3,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Download, Search } from "lucide-react";
+import { useProjectCurrency } from "@/hooks/useProjectCurrency";
 
 interface CounterPartyTabProps {
   projectId: string;
 }
 
 const CounterPartyTab = ({ projectId }: CounterPartyTabProps) => {
+  const { currencySymbol } = useProjectCurrency(projectId);
   const [searchTerm, setSearchTerm] = useState("");
 
   const creditCounterparties = [
@@ -58,7 +60,7 @@ const CounterPartyTab = ({ projectId }: CounterPartyTabProps) => {
                 <thead>
                   <tr className="border-b">
                     <th className="text-left p-2">Counterparty</th>
-                    <th className="text-right p-2">Amount (₹)</th>
+                    <th className="text-right p-2">Amount ({currencySymbol})</th>
                     <th className="text-right p-2">Amount %</th>
                     <th className="text-right p-2">Txns Count</th>
                     <th className="text-center p-2">Actions</th>
@@ -91,10 +93,10 @@ const CounterPartyTab = ({ projectId }: CounterPartyTabProps) => {
           <CardContent>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead>
+              <thead>
                   <tr className="border-b">
                     <th className="text-left p-2">Counterparty</th>
-                    <th className="text-right p-2">Amount (₹)</th>
+                    <th className="text-right p-2">Amount ({currencySymbol})</th>
                     <th className="text-right p-2">Amount %</th>
                     <th className="text-right p-2">Txns Count</th>
                     <th className="text-center p-2">Actions</th>
