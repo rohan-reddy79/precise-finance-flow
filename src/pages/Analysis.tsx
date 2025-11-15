@@ -39,6 +39,7 @@ const Analysis = () => {
   const [loading, setLoading] = useState(true);
   const [hasProcessedData, setHasProcessedData] = useState(true);
   const [processingStatements, setProcessingStatements] = useState(0);
+  const [failedStatements, setFailedStatements] = useState<string[]>([]);
   
   const activeTab = searchParams.get("tab") || "overview";
 
@@ -66,16 +67,18 @@ const Analysis = () => {
       // Check if we have processed data
       const { data: statements } = await supabase
         .from("bank_statements")
-        .select("processing_status, total_transactions")
+        .select("id, processing_status, total_transactions")
         .eq("project_id", projectId);
 
       if (statements) {
         const completed = statements.filter(s => s.processing_status === 'completed');
         const processing = statements.filter(s => s.processing_status === 'processing' || s.processing_status === 'pending');
+        const failed = statements.filter(s => s.processing_status === 'failed');
         const totalTransactions = completed.reduce((sum, s) => sum + (s.total_transactions || 0), 0);
         
         setHasProcessedData(totalTransactions > 0);
         setProcessingStatements(processing.length);
+        setFailedStatements(failed.map(f => f.id));
       }
     } catch (error: any) {
       toast({
@@ -88,6 +91,21 @@ const Analysis = () => {
     }
   };
 
+  const reprocessFailed = async () => {
+    if (failedStatements.length === 0) return;
+    try {
+      await Promise.all(
+        failedStatements.map((id) =>
+          supabase.functions.invoke('process-bank-statement', { body: { statementId: id } })
+        )
+      );
+      toast({ title: 'Reprocessing started', description: `${failedStatements.length} statement(s) queued` });
+      // Refresh after a short delay
+      setTimeout(loadProject, 2000);
+    } catch (e: any) {
+      toast({ title: 'Reprocess failed', description: e.message, variant: 'destructive' });
+    }
+  };
   if (loading || !project) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -125,14 +143,19 @@ const Analysis = () => {
                     : 'Upload bank statements to see analysis data here.'}
                 </p>
               </div>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => navigate(`/projects/${projectId}`)}>
-                  View Statements
-                </Button>
-                <Button variant="outline" size="sm" onClick={loadProject}>
-                  Refresh
-                </Button>
-              </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => navigate(`/projects/${projectId}`)}>
+                    View Statements
+                  </Button>
+                  {failedStatements.length > 0 && (
+                    <Button variant="outline" size="sm" onClick={reprocessFailed}>
+                      Reprocess failed ({failedStatements.length})
+                    </Button>
+                  )}
+                  <Button variant="outline" size="sm" onClick={loadProject}>
+                    Refresh
+                  </Button>
+                </div>
             </div>
           </div>
         )}
