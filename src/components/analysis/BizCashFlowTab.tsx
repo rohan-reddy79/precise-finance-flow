@@ -1,10 +1,12 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useProjectCurrency } from "@/hooks/useProjectCurrency";
 
 interface BizCashFlowTabProps {
   projectId: string;
 }
 
 const BizCashFlowTab = ({ projectId }: BizCashFlowTabProps) => {
+  const { currencySymbol } = useProjectCurrency(projectId);
   const months = ["Jan 2020", "Feb 2020", "Mar 2020", "Apr 2020", "May 2020", "Jun 2020", 
                   "Jul 2020", "Aug 2020", "Sep 2020", "Oct 2020", "Nov 2020", "Dec 2020"];
   
@@ -49,15 +51,15 @@ const BizCashFlowTab = ({ projectId }: BizCashFlowTabProps) => {
               <thead>
                 <tr className="border-b">
                   <th className="text-left p-2">Month</th>
-                  <th className="text-right p-2">Total Inflow (₹)</th>
-                  <th className="text-right p-2">Biz Inflow (₹)</th>
+                  <th className="text-right p-2">Total Inflow ({currencySymbol})</th>
+                  <th className="text-right p-2">Biz Inflow ({currencySymbol})</th>
                   <th className="text-right p-2">% Biz Inflow</th>
                   <th className="text-right p-2">Biz Inflow Txns</th>
-                  <th className="text-right p-2">Total Outflow (₹)</th>
-                  <th className="text-right p-2">Biz Outflow (₹)</th>
+                  <th className="text-right p-2">Total Outflow ({currencySymbol})</th>
+                  <th className="text-right p-2">Biz Outflow ({currencySymbol})</th>
                   <th className="text-right p-2">% Biz Outflow</th>
                   <th className="text-right p-2">Biz Outflow Txns</th>
-                  <th className="text-right p-2">Net Biz Cash Flow (₹)</th>
+                  <th className="text-right p-2">Net Biz Cash Flow ({currencySymbol})</th>
                 </tr>
               </thead>
               <tbody>
@@ -105,11 +107,11 @@ const BizCashFlowTab = ({ projectId }: BizCashFlowTabProps) => {
               <thead>
                 <tr className="border-b">
                   <th className="text-left p-2">Period</th>
-                  <th className="text-right p-2">Total Inflow (₹)</th>
-                  <th className="text-right p-2">Biz Inflow (₹)</th>
-                  <th className="text-right p-2">Total Outflow (₹)</th>
-                  <th className="text-right p-2">Biz Outflow (₹)</th>
-                  <th className="text-right p-2">Net Biz Cash Flow (₹)</th>
+                  <th className="text-right p-2">Total Inflow ({currencySymbol})</th>
+                  <th className="text-right p-2">Biz Inflow ({currencySymbol})</th>
+                  <th className="text-right p-2">Total Outflow ({currencySymbol})</th>
+                  <th className="text-right p-2">Biz Outflow ({currencySymbol})</th>
+                  <th className="text-right p-2">Net Biz Cash Flow ({currencySymbol})</th>
                 </tr>
               </thead>
               <tbody>

@@ -40,6 +40,7 @@ const Analysis = () => {
   const [hasProcessedData, setHasProcessedData] = useState(true);
   const [processingStatements, setProcessingStatements] = useState(0);
   const [failedStatements, setFailedStatements] = useState<string[]>([]);
+  const [deletingAll, setDeletingAll] = useState(false);
   
   const activeTab = searchParams.get("tab") || "overview";
 
@@ -106,6 +107,66 @@ const Analysis = () => {
       toast({ title: 'Reprocess failed', description: e.message, variant: 'destructive' });
     }
   };
+
+  const deleteAllFailed = async () => {
+    if (failedStatements.length === 0) {
+      toast({
+        title: "No failed statements",
+        description: "There are no failed statements to delete",
+      });
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to delete all ${failedStatements.length} failed statements? This cannot be undone.`)) {
+      return;
+    }
+
+    setDeletingAll(true);
+    try {
+      // Get full statement details first
+      const { data: statements } = await supabase
+        .from('bank_statements')
+        .select('*')
+        .in('id', failedStatements);
+
+      if (statements) {
+        for (const statement of statements) {
+          // Delete file from storage
+          await supabase.storage
+            .from('bank-statements')
+            .remove([statement.file_path]);
+
+          // Delete associated transactions
+          await supabase
+            .from('transactions')
+            .delete()
+            .eq('statement_id', statement.id);
+
+          // Delete statement record
+          await supabase
+            .from('bank_statements')
+            .delete()
+            .eq('id', statement.id);
+        }
+      }
+
+      toast({
+        title: "Failed statements deleted",
+        description: `Successfully deleted ${failedStatements.length} failed statements`,
+      });
+
+      loadProject();
+    } catch (error: any) {
+      toast({
+        title: "Error deleting statements",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingAll(false);
+    }
+  };
+  
   if (loading || !project) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -143,19 +204,30 @@ const Analysis = () => {
                     : 'Upload bank statements to see analysis data here.'}
                 </p>
               </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={() => navigate(`/projects/${projectId}`)}>
-                    View Statements
-                  </Button>
-                  {failedStatements.length > 0 && (
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => navigate(`/projects/${projectId}`)}>
+                  View Statements
+                </Button>
+                {failedStatements.length > 0 && (
+                  <>
                     <Button variant="outline" size="sm" onClick={reprocessFailed}>
                       Reprocess failed ({failedStatements.length})
                     </Button>
-                  )}
-                  <Button variant="outline" size="sm" onClick={loadProject}>
-                    Refresh
-                  </Button>
-                </div>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={deleteAllFailed}
+                      disabled={deletingAll}
+                    >
+                      {deletingAll && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Delete All Failed
+                    </Button>
+                  </>
+                )}
+                <Button variant="outline" size="sm" onClick={loadProject}>
+                  Refresh
+                </Button>
+              </div>
             </div>
           </div>
         )}

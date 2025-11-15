@@ -1,7 +1,10 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import * as XLSX from 'https://esm.sh/xlsx@0.18.5';
 import { z } from 'https://esm.sh/zod@3.22.4';
-import pdf from 'https://esm.sh/pdf-parse@1.1.1';
+import * as pdfjsLib from 'https://esm.sh/pdfjs-dist@4.6.82';
+
+// Configure PDF.js worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.6.82/build/pdf.worker.mjs';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -388,29 +391,48 @@ async function parseSpreadsheet(fileData: Blob): Promise<{ transactions: any[], 
 
 async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency: string }> {
   try {
-    console.log('Starting PDF parsing...');
+    console.log('Starting PDF parsing with PDF.js...');
     
-    // Convert Blob to Buffer for pdf-parse
+    // Convert Blob to Uint8Array for PDF.js
     const arrayBuffer = await fileData.arrayBuffer();
-    const buffer = new Uint8Array(arrayBuffer);
+    const uint8Array = new Uint8Array(arrayBuffer);
     
-    const data = await pdf(buffer);
-    console.log('PDF text extracted, pages:', data.numpages);
+    // Load the PDF document
+    const loadingTask = pdfjsLib.getDocument({ data: uint8Array });
+    const pdfDoc = await loadingTask.promise;
     
-    // Extract text content
-    const text = data.text;
+    console.log(`PDF loaded: ${pdfDoc.numPages} pages`);
+    
+    // Extract text from all pages
+    let fullText = '';
+    for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+      const page = await pdfDoc.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items.map((item: any) => item.str).join(' ');
+      fullText += pageText + '\n';
+      console.log(`Page ${pageNum}: extracted ${pageText.length} characters`);
+    }
+    
+    console.log(`Total extracted text length: ${fullText.length} characters`);
     
     // Detect currency from the text
     let currency = 'USD';
-    if (text.includes('₹') || text.includes('INR')) currency = 'INR';
-    else if (text.includes('$') || text.includes('USD')) currency = 'USD';
-    else if (text.includes('£') || text.includes('GBP')) currency = 'GBP';
-    else if (text.includes('€') || text.includes('EUR')) currency = 'EUR';
+    if (fullText.includes('₹') || fullText.includes('INR')) currency = 'INR';
+    else if (fullText.includes('$') || fullText.includes('USD')) currency = 'USD';
+    else if (fullText.includes('£') || fullText.includes('GBP')) currency = 'GBP';
+    else if (fullText.includes('€') || fullText.includes('EUR')) currency = 'EUR';
+    
+    console.log(`Detected currency: ${currency}`);
     
     // Parse transactions from the extracted text
-    const transactions = parseTransactionsFromText(text);
+    const transactions = parseTransactionsFromText(fullText);
     
     console.log(`Parsed ${transactions.length} transactions from PDF`);
+    
+    if (transactions.length < 3) {
+      console.error('Too few transactions parsed, likely scanned or unsupported format');
+      throw new Error('Could not extract enough transactions from PDF (likely scanned or unsupported format). Please try CSV or Excel.');
+    }
     
     return { transactions, currency };
   } catch (error) {
@@ -424,14 +446,17 @@ function parseTransactionsFromText(text: string): any[] {
   const transactions: any[] = [];
   const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   
-  // Date patterns to match various formats
+  console.log(`Processing ${lines.length} lines from text`);
+  
+  // Enhanced date patterns to match various formats
   const datePatterns = [
-    /(\d{2}[\/\-\.]\d{2}[\/\-\.]\d{4})/,           // DD/MM/YYYY or DD-MM-YYYY
+    /(\d{2}[\/\-\.]\d{2}[\/\-\.]\d{4})/,           // DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
     /(\d{2}\s+[A-Za-z]{3}\s+\d{4})/,               // DD MMM YYYY
+    /(\d{2}\-[A-Za-z]{3}\-\d{4})/,                 // DD-MMM-YYYY (Indian format)
     /(\d{4}[\/\-]\d{2}[\/\-]\d{2})/                // YYYY-MM-DD
   ];
   
-  // Amount pattern - matches numbers with optional currency symbols
+  // Amount pattern - matches Indian and international formats
   const amountPattern = /[₹$£€]?\s*[\d,]+\.?\d*/g;
   
   for (let i = 0; i < lines.length; i++) {
@@ -477,19 +502,24 @@ function parseTransactionsFromText(text: string): any[] {
     
     if (parsedAmounts.length === 0) continue;
     
-    // Determine if debit or credit based on column position or keywords
-    const isDebitKeyword = line.toLowerCase().includes('debit') || 
-                          line.toLowerCase().includes('withdrawal') ||
-                          line.toLowerCase().includes('payment');
-    const isCreditKeyword = line.toLowerCase().includes('credit') || 
-                           line.toLowerCase().includes('deposit');
+    // Enhanced debit/credit detection
+    const lineLC = line.toLowerCase();
+    const hasDebitKeyword = lineLC.includes('dr') || lineLC.includes('debit') || 
+                            lineLC.includes('withdrawal') || lineLC.includes('payment') ||
+                            lineLC.includes('wd');
+    const hasCreditKeyword = lineLC.includes('cr') || lineLC.includes('credit') || 
+                             lineLC.includes('deposit') || lineLC.includes('cd');
     
     // Use the first significant amount found
     let amount = parsedAmounts[0];
-    let isDebit = isDebitKeyword;
+    let isDebit = hasDebitKeyword;
     
-    // If we have exactly 2 amounts and no keywords, assume first is debit, second is credit
-    if (parsedAmounts.length >= 2 && !isDebitKeyword && !isCreditKeyword) {
+    // Determine transaction type with improved logic
+    if (hasCreditKeyword) {
+      isDebit = false;
+    } else if (hasDebitKeyword) {
+      isDebit = true;
+    } else if (parsedAmounts.length >= 2) {
       // Check which amount appears first in the line
       const firstAmountPos = line.indexOf(amounts[0]);
       const secondAmountPos = line.indexOf(amounts[1]);
@@ -502,9 +532,21 @@ function parseTransactionsFromText(text: string): any[] {
       }
     }
     
+    const parsedDate = parseDate(dateStr);
+    if (!parsedDate) {
+      console.log(`Skipping line with invalid date: ${dateStr}`);
+      continue;
+    }
+    
+    // Skip invalid amounts
+    if (amount <= 0 || amount > 10000000) {
+      console.log(`Skipping line with invalid amount: ${amount}`);
+      continue;
+    }
+    
     try {
       const transactionData = {
-        date: parseDate(dateStr),
+        date: parsedDate,
         description: sanitizeString(description),
         amount: isDebit ? -Math.abs(amount) : Math.abs(amount),
         is_debit: isDebit,
@@ -522,6 +564,7 @@ function parseTransactionsFromText(text: string): any[] {
     }
   }
   
+  console.log(`Successfully parsed ${transactions.length} valid transactions`);
   return transactions;
 }
 
