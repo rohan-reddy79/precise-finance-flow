@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { useProjectCurrency } from "@/hooks/useProjectCurrency";
 
 interface AMLAnalysisTabProps {
   projectId: string;
@@ -9,6 +10,7 @@ interface AMLAnalysisTabProps {
 
 const AMLAnalysisTab = ({ projectId }: AMLAnalysisTabProps) => {
   const riskScore = 35; // Lower is better
+  const { currencySymbol } = useProjectCurrency(projectId);
   
   const metrics = [
     { label: "Daily Avg Balance", value: "₹52,450" },
@@ -62,7 +64,7 @@ const AMLAnalysisTab = ({ projectId }: AMLAnalysisTabProps) => {
         {metrics.map((metric, idx) => (
           <Card key={idx}>
             <CardContent className="p-4 text-center">
-              <div className="text-lg font-bold">{metric.value}</div>
+              <div className="text-lg font-bold">{metric.value.replace('₹', currencySymbol)}</div>
               <div className="text-xs text-muted-foreground mt-1">{metric.label}</div>
             </CardContent>
           </Card>
@@ -79,7 +81,7 @@ const AMLAnalysisTab = ({ projectId }: AMLAnalysisTabProps) => {
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="month" />
               <YAxis />
-              <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} />
+              <Tooltip formatter={(value: number) => `${currencySymbol}${value.toLocaleString()}`} />
               <Line type="monotone" dataKey="deposits" stroke="hsl(var(--chart-1))" strokeWidth={2} name="Deposits" />
               <Line type="monotone" dataKey="withdrawals" stroke="hsl(var(--chart-2))" strokeWidth={2} name="Withdrawals" />
             </LineChart>
@@ -128,8 +130,8 @@ const AMLAnalysisTab = ({ projectId }: AMLAnalysisTabProps) => {
                   {activityData.map((data, idx) => (
                     <tr key={idx} className="border-b">
                       <td className="p-2">{data.month}</td>
-                      <td className="text-right p-2">₹{data.maxBal.toLocaleString()}</td>
-                      <td className="text-right p-2">₹{data.minBal.toLocaleString()}</td>
+                      <td className="text-right p-2">{`${currencySymbol}${data.maxBal.toLocaleString()}`}</td>
+                      <td className="text-right p-2">{`${currencySymbol}${data.minBal.toLocaleString()}`}</td>
                       <td className="text-right p-2">{data.gap} days</td>
                     </tr>
                   ))}
