@@ -18,6 +18,7 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
     endDate: '',
     currency: 'USD',
   });
+  const currencySymbol = summary.currency === 'INR' ? '₹' : summary.currency === 'GBP' ? '£' : summary.currency === 'EUR' ? '€' : '$';
 
   useEffect(() => {
     loadSummary();
@@ -106,7 +107,7 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-bold text-green-600">
-              {summary.currency === 'INR' ? '₹' : '$'}{summary.totalCredit.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              {currencySymbol}{summary.totalCredit.toLocaleString(undefined, { maximumFractionDigits: 2 })}
             </p>
           </CardContent>
         </Card>
@@ -117,7 +118,7 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
           </CardHeader>
           <CardContent>
             <p className="text-2xl font-bold text-red-600">
-              {summary.currency === 'INR' ? '₹' : '$'}{summary.totalDebit.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              {currencySymbol}{summary.totalDebit.toLocaleString(undefined, { maximumFractionDigits: 2 })}
             </p>
           </CardContent>
         </Card>
@@ -128,7 +129,7 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
           </CardHeader>
           <CardContent>
             <p className={`text-2xl font-bold ${summary.netFlow >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              {summary.currency === 'INR' ? '₹' : '$'}{summary.netFlow.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              {currencySymbol}{summary.netFlow.toLocaleString(undefined, { maximumFractionDigits: 2 })}
             </p>
           </CardContent>
         </Card>

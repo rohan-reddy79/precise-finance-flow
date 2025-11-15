@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Download, Filter, Loader2 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useProjectCurrency } from "@/hooks/useProjectCurrency";
 
 interface TransactionsTabProps {
   projectId: string;
@@ -16,6 +17,7 @@ const TransactionsTab = ({ projectId }: TransactionsTabProps) => {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [transactions, setTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const { currencySymbol } = useProjectCurrency(projectId);
 
   useEffect(() => {
     loadTransactions();
@@ -136,10 +138,10 @@ const TransactionsTab = ({ projectId }: TransactionsTabProps) => {
                         <td className="p-2">{txn.description}</td>
                         <td className="p-2 text-muted-foreground">{txn.merchant || '-'}</td>
                         <td className="text-right p-2 text-green-600">
-                          {!txn.is_debit ? `₹${parseFloat(txn.amount).toLocaleString()}` : "-"}
+                          {!txn.is_debit ? `${currencySymbol}${parseFloat(txn.amount).toLocaleString()}` : "-"}
                         </td>
                         <td className="text-right p-2 text-red-600">
-                          {txn.is_debit ? `₹${parseFloat(txn.amount).toLocaleString()}` : "-"}
+                          {txn.is_debit ? `${currencySymbol}${parseFloat(txn.amount).toLocaleString()}` : "-"}
                         </td>
                         <td className="p-2">
                           <Badge variant="outline">{txn.category || 'Uncategorized'}</Badge>
