@@ -1,12 +1,14 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useProjectCurrency } from "@/hooks/useProjectCurrency";
 
 interface CategoriesTabProps {
   projectId: string;
 }
 
 const CategoriesTab = ({ projectId }: CategoriesTabProps) => {
+  const { currencySymbol } = useProjectCurrency(projectId);
   const operatingExpenses = [
     { name: "Office Rent / Equipment Lease", credit: 0, debit: 85000, txnCount: 12, percentage: 32 },
     { name: "Employees salaries", credit: 0, debit: 120000, txnCount: 24, percentage: 45 },
@@ -56,7 +58,7 @@ const CategoriesTab = ({ projectId }: CategoriesTabProps) => {
                   <thead>
                     <tr className="border-b">
                       <th className="text-left p-2">Category</th>
-                      <th className="text-right p-2">Total Debit (₹)</th>
+                      <th className="text-right p-2">Total Debit ({currencySymbol})</th>
                       <th className="text-right p-2">Txn Count</th>
                       <th className="text-right p-2">Percentage</th>
                       <th className="text-right p-2">Avg Per Txn</th>
@@ -69,7 +71,7 @@ const CategoriesTab = ({ projectId }: CategoriesTabProps) => {
                         <td className="text-right p-2">{expense.debit.toLocaleString()}</td>
                         <td className="text-right p-2">{expense.txnCount}</td>
                         <td className="text-right p-2">{expense.percentage}%</td>
-                        <td className="text-right p-2">₹{(expense.debit / expense.txnCount).toFixed(2)}</td>
+                        <td className="text-right p-2">{currencySymbol}{(expense.debit / expense.txnCount).toFixed(2)}</td>
                       </tr>
                     ))}
                   </tbody>

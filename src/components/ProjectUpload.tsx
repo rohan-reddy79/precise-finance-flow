@@ -103,7 +103,7 @@ const ProjectUpload = ({ projectId, onUploadComplete }: ProjectUploadProps) => {
 
         if (uploadError) throw uploadError;
 
-        // Create statement record
+        // Create statement record with proper MIME type
         const { data: statement, error: statementError } = await supabase
           .from('bank_statements')
           .insert({
@@ -111,7 +111,7 @@ const ProjectUpload = ({ projectId, onUploadComplete }: ProjectUploadProps) => {
             project_id: projectId,
             file_name: file.name,
             file_path: fileName,
-            file_type: fileExt || 'csv',
+            file_type: file.type || fileExt || 'csv',
             processing_status: 'pending',
           })
           .select()
@@ -129,7 +129,11 @@ const ProjectUpload = ({ projectId, onUploadComplete }: ProjectUploadProps) => {
 
         if (processError) {
           console.error('Processing error:', processError);
-          // Continue with other files even if one fails
+          toast({
+            title: "Processing error",
+            description: processError.message || "Failed to start processing",
+            variant: "destructive",
+          });
         }
 
         setUploadProgress(((i + 1) / selectedFiles.length) * 100);
