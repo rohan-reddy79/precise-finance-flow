@@ -3,11 +3,14 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2 } from "lucide-react";
 
+import { useProjectCurrency } from "@/hooks/useProjectCurrency";
+
 interface SummaryTabProps {
   projectId: string;
 }
 
 const SummaryTab = ({ projectId }: SummaryTabProps) => {
+  const { currencySymbol } = useProjectCurrency(projectId);
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState({
     totalTransactions: 0,
@@ -16,9 +19,7 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
     netFlow: 0,
     startDate: '',
     endDate: '',
-    currency: 'USD',
   });
-  const currencySymbol = summary.currency === 'INR' ? '₹' : summary.currency === 'GBP' ? '£' : summary.currency === 'EUR' ? '€' : '$';
 
   useEffect(() => {
     loadSummary();
@@ -38,7 +39,6 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
       }
 
       const statementIds = statements.map(s => s.id);
-      const currency = statements[0]?.currency || 'USD';
 
       // Fetch all transactions
       const { data: transactions } = await supabase
@@ -69,7 +69,6 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
         netFlow: totalCredit - totalDebit,
         startDate: dates[0]?.toLocaleDateString() || '',
         endDate: dates[dates.length - 1]?.toLocaleDateString() || '',
-        currency,
       });
 
       setLoading(false);
