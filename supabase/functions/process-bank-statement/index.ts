@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import * as XLSX from 'https://esm.sh/xlsx@0.18.5';
 import { z } from 'https://esm.sh/zod@3.22.4';
+import pdf from 'https://esm.sh/pdf-parse@1.1.1';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -387,14 +388,35 @@ async function parseSpreadsheet(fileData: Blob): Promise<{ transactions: any[], 
 
 async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency: string }> {
   try {
-    console.log('Starting PDF parse - not yet implemented');
+    console.log('Starting PDF parsing...');
     
-    // For now, throw an error to indicate PDF parsing is not yet implemented
-    // This will give users a clear error message instead of silent failure
-    throw new Error('PDF_PARSING_NOT_AVAILABLE');
+    // Convert Blob to Buffer for pdf-parse
+    const arrayBuffer = await fileData.arrayBuffer();
+    const buffer = new Uint8Array(arrayBuffer);
+    
+    const data = await pdf(buffer);
+    console.log('PDF text extracted, pages:', data.numpages);
+    
+    // Extract text content
+    const text = data.text;
+    
+    // Detect currency from the text
+    let currency = 'USD';
+    if (text.includes('₹') || text.includes('INR')) currency = 'INR';
+    else if (text.includes('$') || text.includes('USD')) currency = 'USD';
+    else if (text.includes('£') || text.includes('GBP')) currency = 'GBP';
+    else if (text.includes('€') || text.includes('EUR')) currency = 'EUR';
+    
+    // Parse transactions from the extracted text
+    const transactions = parseTransactionsFromText(text);
+    
+    console.log(`Parsed ${transactions.length} transactions from PDF`);
+    
+    return { transactions, currency };
   } catch (error) {
     console.error('PDF parsing error:', error);
-    throw error;
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    throw new Error(`Failed to parse PDF: ${errorMessage}`);
   }
 }
 
