@@ -41,53 +41,36 @@ const ProjectUpload = ({ projectId, onUploadComplete }: ProjectUploadProps) => {
       return;
     }
 
-    // Verify MIME types - PDF not yet supported
+    // Verify MIME types
     const validMimeTypes = [
       'text/csv',
       'application/vnd.ms-excel',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/pdf'
     ];
     
     const invalidMime = files.filter(f => !validMimeTypes.includes(f.type));
     if (invalidMime.length > 0) {
-      const pdfFiles = files.filter(f => f.type === 'application/pdf');
-      if (pdfFiles.length > 0) {
-        toast({
-          title: "PDF files not yet supported",
-          description: "Please convert to CSV or Excel format. PDF support coming soon!",
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "Invalid file type",
-          description: "Please upload CSV or Excel files only",
-          variant: "destructive",
-        });
-      }
+      toast({
+        title: "Invalid file type",
+        description: "Please upload CSV, Excel, or PDF files only",
+        variant: "destructive",
+      });
       return;
     }
 
-    // Validate file extensions - PDF not yet supported
+    // Validate file extensions
     const validFiles = files.filter(file => {
       const ext = file.name.split('.').pop()?.toLowerCase();
-      return ext === 'csv' || ext === 'xlsx' || ext === 'xls';
+      return ext === 'csv' || ext === 'xlsx' || ext === 'xls' || ext === 'pdf';
     });
 
     if (validFiles.length !== files.length) {
-      const pdfFiles = files.filter(f => f.name.toLowerCase().endsWith('.pdf'));
-      if (pdfFiles.length > 0) {
-        toast({
-          title: "PDF files not yet supported",
-          description: "Please use CSV or Excel files. PDF support coming soon!",
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "Invalid file format",
-          description: "Only CSV and Excel (XLSX/XLS) files are supported",
-          variant: "destructive",
-        });
-      }
+      toast({
+        title: "Invalid file format",
+        description: "Only CSV, Excel (XLSX/XLS), and PDF files are supported",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -176,7 +159,7 @@ const ProjectUpload = ({ projectId, onUploadComplete }: ProjectUploadProps) => {
       <div className="flex items-center gap-4">
         <Input
           type="file"
-          accept=".csv,.xlsx,.xls"
+          accept=".csv,.xlsx,.xls,.pdf"
           multiple
           onChange={handleFileSelect}
           disabled={uploading || selectedFiles.length >= 12}
