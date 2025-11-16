@@ -1,7 +1,10 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import * as XLSX from 'https://esm.sh/xlsx@0.18.5';
 import { z } from 'https://esm.sh/zod@3.22.4';
-import { getDocument, version } from 'https://esm.sh/pdfjs-dist@4.0.379/legacy/build/pdf.mjs';
+import { getDocument, GlobalWorkerOptions, version } from 'https://esm.sh/pdfjs-dist@4.0.379/legacy/build/pdf.mjs';
+
+// Configure PDF.js worker (required in edge runtime)
+GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.0.379/legacy/build/pdf.worker.mjs';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
