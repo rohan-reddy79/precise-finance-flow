@@ -454,25 +454,48 @@ async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency
     
     console.log(`Detected currency: ${currency}`);
     
-    // Extract statement period from header text
+    // Extract statement period from header text (search only first 2000 chars to avoid matching transaction dates)
     let statementPeriodStart = null;
     let statementPeriodEnd = null;
     
-    const periodPattern = /for\s+(\w+\s+\d{1,2},\s+\d{4})\s+to\s+(\w+\s+\d{1,2},\s+\d{4})/i;
-    const periodMatch = fullText.match(periodPattern);
+    const headerText = fullText.substring(0, 2000);
+    console.log('Searching for statement period in header...');
     
-    if (periodMatch) {
-      const startDateStr = periodMatch[1]; // "October 22, 2024"
-      const endDateStr = periodMatch[2];   // "November 18, 2024"
-      
-      const startDate = new Date(startDateStr);
-      const endDate = new Date(endDateStr);
-      
-      if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
-        statementPeriodStart = startDate.toISOString().split('T')[0];
-        statementPeriodEnd = endDate.toISOString().split('T')[0];
-        console.log(`Extracted statement period: ${statementPeriodStart} to ${statementPeriodEnd}`);
+    // Try multiple patterns to extract statement period
+    const periodPatterns = [
+      // Pattern 1: "Statement Period: MM/DD/YYYY - MM/DD/YYYY"
+      { regex: /(statement\s*period|billing\s*period|period)[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})\s*[-–to]+\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i, startGroup: 2, endGroup: 3 },
+      // Pattern 2: "From MM/DD/YYYY to MM/DD/YYYY"
+      { regex: /from\s+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})\s+(to|through)\s+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i, startGroup: 1, endGroup: 3 },
+      // Pattern 3: "Month DD, YYYY to Month DD, YYYY"
+      { regex: /(\w+\s+\d{1,2},\s+\d{4})\s*[-–to]+\s*(\w+\s+\d{1,2},\s+\d{4})/i, startGroup: 1, endGroup: 2 },
+      // Pattern 4: "for Month DD, YYYY to Month DD, YYYY"
+      { regex: /for\s+(\w+\s+\d{1,2},\s+\d{4})\s+to\s+(\w+\s+\d{1,2},\s+\d{4})/i, startGroup: 1, endGroup: 2 },
+      // Pattern 5: Just two dates separated by dash/to
+      { regex: /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})\s*[-–to]+\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i, startGroup: 1, endGroup: 2 }
+    ];
+    
+    for (const pattern of periodPatterns) {
+      const match = headerText.match(pattern.regex);
+      if (match) {
+        const startDateStr = match[pattern.startGroup];
+        const endDateStr = match[pattern.endGroup];
+        
+        const startDate = parseDate(startDateStr);
+        const endDate = parseDate(endDateStr);
+        
+        if (startDate && endDate) {
+          statementPeriodStart = startDate;
+          statementPeriodEnd = endDate;
+          console.log(`✓ Extracted period from header: ${statementPeriodStart} to ${statementPeriodEnd}`);
+          break;
+        }
       }
+    }
+    
+    if (!statementPeriodStart || !statementPeriodEnd) {
+      console.log('✗ Could not extract period from header, will calculate from transactions');
+      console.log(`Header sample: ${headerText.substring(0, 300)}`);
     }
     
     const transactions = parseTransactionsFromText(fullText);
@@ -498,100 +521,138 @@ async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency
 
 function parseTransactionsFromText(text: string): any[] {
   const transactions: any[] = [];
+  const rejectedLines: Array<{ line: string; reason: string }> = [];
   const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   
+  console.log(`\n=== TRANSACTION PARSING DEBUG ===`);
   console.log(`Processing ${lines.length} lines from text`);
   
-  // Enhanced date patterns to match more formats
-  const datePatterns = [
-    /(\d{2}[\/\-\.]\d{2}[\/\-\.]\d{4})/,
-    /(\d{2}\s+[A-Za-z]{3}\s+\d{4})/,
-    /(\d{2}\-[A-Za-z]{3}\-\d{4})/,
-    /(\d{4}[\/\-]\d{2}[\/\-]\d{2})/,
-    /(\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})/,  // "5 November 2024"
-    /(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/  // More flexible date
+  // Comprehensive skip patterns for headers, footers, and non-transaction lines
+  const skipPatterns = [
+    /statement\s*(period|date|from|through|ending|as\s*of)/i,
+    /account\s*(number|ending|balance|summary|type)/i,
+    /balance\s*(forward|as\s*of|beginning|ending|available|current)/i,
+    /total|subtotal|amount\s*due|minimum\s*payment|payment\s*due/i,
+    /page\s*\d+|^\d+\s*of\s*\d+/i,
+    /credit\s*limit|available\s*credit|apr|interest\s*rate/i,
+    /rewards|points|miles|cashback\s*earned/i,
+    /previous\s*balance|new\s*balance|closing\s*balance/i,
+    /fees\s*and\s*charges|finance\s*charge/i,
+    /customer\s*service|questions|contact\s*us/i,
+    /^(payments|purchases|credits|debits|fees)$/i,
+    /opening\s*balance|opening\s*bal/i,
+    /^\s*$|^[\s\-_=]+$/,
+    /date.*description.*amount/i,
+    /transaction\s*date|post\s*date|value\s*date/i
   ];
   
-  // More robust amount pattern that handles currency symbols and formatting
-  const amountPattern = /(?:[₹$£€]\s*)?[\d,]+\.?\d{0,2}/g;
+  // Stricter date pattern - must be at start of line
+  const strictDatePattern = /^(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/;
   
-  let skippedLines = 0;
-  let linesWithDates = 0;
-  let linesWithAmounts = 0;
+  // Stricter amount pattern - requires decimal point, match last amount on line
+  const strictAmountPattern = /(?:[₹$£€]\s*)?((?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2})/g;
+  
+  let linesScanned = 0;
+  let linesSkipped = 0;
+  let linesWithDate = 0;
+  let linesWithAmount = 0;
+  let linesRejectedDate = 0;
+  
+  // Date range validation
+  const now = new Date();
+  const twoYearsAgo = new Date(now.getFullYear() - 2, now.getMonth(), now.getDate());
+  const oneMonthFuture = new Date(now.getFullYear(), now.getMonth() + 1, now.getDate());
   
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    linesScanned++;
     
-    // Skip header lines
-    if (line.toLowerCase().includes('date') && line.toLowerCase().includes('description')) {
-      skippedLines++;
-      continue;
-    }
-    if (line.toLowerCase().includes('opening balance') || line.toLowerCase().includes('closing balance')) {
-      skippedLines++;
-      continue;
-    }
-    if (line.toLowerCase().includes('statement') || line.toLowerCase().includes('account')) {
-      skippedLines++;
-      continue;
-    }
-    
-    let dateMatch = null;
-    let dateStr = '';
-    
-    for (const pattern of datePatterns) {
-      dateMatch = line.match(pattern);
-      if (dateMatch) {
-        dateStr = dateMatch[1];
-        linesWithDates++;
+    // Skip lines matching any skip pattern
+    let shouldSkip = false;
+    for (const pattern of skipPatterns) {
+      if (pattern.test(line)) {
+        linesSkipped++;
+        shouldSkip = true;
         break;
       }
     }
+    if (shouldSkip) continue;
     
-    if (!dateMatch) continue;
+    // Must start with a date
+    const dateMatch = line.match(strictDatePattern);
+    if (!dateMatch) {
+      continue;
+    }
     
-    const amounts = line.match(amountPattern);
-    if (!amounts || amounts.length === 0) continue;
+    const dateStr = dateMatch[1];
+    linesWithDate++;
     
-    linesWithAmounts++;
+    // Validate the date makes sense
+    const parsedDate = parseDate(dateStr);
+    if (!parsedDate) {
+      rejectedLines.push({ line: line.substring(0, 80), reason: 'Date unparseable' });
+      continue;
+    }
+    
+    const txDate = new Date(parsedDate);
+    if (txDate < twoYearsAgo || txDate > oneMonthFuture) {
+      rejectedLines.push({ line: line.substring(0, 80), reason: `Date out of range: ${parsedDate}` });
+      linesRejectedDate++;
+      continue;
+    }
+    
+    // Find all amounts, use the LAST one (typically the final amount after debits/credits)
+    const amountMatches = Array.from(line.matchAll(strictAmountPattern));
+    if (amountMatches.length === 0) {
+      continue;
+    }
+    
+    linesWithAmount++;
+    
+    const lastAmountMatch = amountMatches[amountMatches.length - 1];
+    const lastAmountStr = lastAmountMatch[1];
+    const lastAmountIndex = lastAmountMatch.index!;
     
     const dateIndex = line.indexOf(dateStr);
-    const firstAmountIndex = line.indexOf(amounts[0]);
     
-    // Extract everything between date and amount
-    let rawDescription = line.substring(dateIndex + dateStr.length, firstAmountIndex).trim();
+    // Extract text between date and amount
+    let rawDescription = line.substring(dateIndex + dateStr.length, lastAmountIndex).trim();
     
-    // Clean up common transaction type keywords that appear at the end
-    const typeKeywords = ['PURCHASE', 'DEBIT', 'WITHDRAWAL', 'ATM', 'TRANSFER', 'PAYMENT', 'DEPOSIT', 'CREDIT', 'ACH', 'CHECK'];
+    // Must have meaningful text between date and amount
+    if (rawDescription.length < 3) {
+      rejectedLines.push({ line: line.substring(0, 80), reason: 'Description too short' });
+      continue;
+    }
+    
+    // Clean up description
+    const typeKeywords = ['PURCHASE', 'DEBIT', 'WITHDRAWAL', 'ATM', 'TRANSFER', 'PAYMENT', 'DEPOSIT', 'CREDIT', 'ACH', 'CHECK', 'POS'];
     let description = rawDescription;
     
-    // Try to extract merchant name before type keywords
+    // Remove type keywords that appear at the end
     for (const keyword of typeKeywords) {
-      const keywordIndex = rawDescription.toUpperCase().lastIndexOf(keyword);
-      if (keywordIndex > 0) {
-        // Take everything before the keyword as merchant name
-        description = rawDescription.substring(0, keywordIndex).trim();
-        break;
-      }
+      const regex = new RegExp(`\\b${keyword}\\b\\s*$`, 'i');
+      description = description.replace(regex, '').trim();
     }
     
-    // If description is still empty or very short, use the full raw description
-    if (!description || description.length < 3) {
-      description = rawDescription || 'Unknown Transaction';
+    // Remove reference numbers (4+ digits at end)
+    description = description.replace(/\s+\d{4,}\s*$/, '').trim();
+    
+    // Remove redundant dates
+    description = description.replace(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/g, '').trim();
+    
+    // Remove extra whitespace
+    description = description.replace(/\s+/g, ' ').trim();
+    
+    // Fallback if description is now empty
+    if (description.length < 2) {
+      description = `Transaction ${dateStr}`;
     }
     
-    // Additional cleanup - remove redundant date references
-    description = description.replace(/\d{2}\/\d{2}\/\d{2,4}/g, '').trim();
-    // Remove transaction reference numbers like "1114" or "0406"
-    description = description.replace(/\b\d{4}\b/g, '').trim();
+    // Parse and validate amount
+    const amount = parseAmount(lastAmountStr);
+    if (amount <= 0) continue;
     
-    if (!description || description.length < 2) {
-      description = 'Unknown Transaction';
-    }
-    
-    const parsedAmounts = amounts.map(a => parseAmount(a)).filter(a => a > 0);
-    if (parsedAmounts.length === 0) continue;
-    
+    // Determine if debit or credit
     const lineLC = line.toLowerCase();
     const hasDebitKeyword = lineLC.includes('dr') || lineLC.includes('debit') || 
                             lineLC.includes('withdrawal') || lineLC.includes('payment') ||
@@ -599,33 +660,9 @@ function parseTransactionsFromText(text: string): any[] {
     const hasCreditKeyword = lineLC.includes('cr') || lineLC.includes('credit') || 
                              lineLC.includes('deposit') || lineLC.includes('cd');
     
-    let amount = parsedAmounts[0];
-    let isDebit = hasDebitKeyword;
+    const isDebit = hasDebitKeyword || (!hasCreditKeyword && amount > 0);
     
-    if (hasCreditKeyword) {
-      isDebit = false;
-    } else if (hasDebitKeyword) {
-      isDebit = true;
-    } else if (parsedAmounts.length >= 2) {
-      const firstAmountPos = line.indexOf(amounts[0]);
-      const secondAmountPos = line.indexOf(amounts[1]);
-      
-      if (parsedAmounts[0] > 0 && firstAmountPos < secondAmountPos) {
-        isDebit = true;
-      } else if (parsedAmounts[1] > 0) {
-        amount = parsedAmounts[1];
-        isDebit = false;
-      }
-    }
-    
-    const parsedDate = parseDate(dateStr);
-    if (!parsedDate) {
-      console.log(`Skipping transaction - failed to parse date: ${dateStr}`);
-      continue;
-    }
-    
-    if (amount <= 0 || amount > 10000000) continue;
-    
+    // Create transaction object
     try {
       const transactionData = {
         date: parsedDate,
@@ -639,19 +676,37 @@ function parseTransactionsFromText(text: string): any[] {
         transactions.push(validationResult.data);
       }
     } catch (error) {
-      console.log('Error parsing transaction from line:', line);
+      console.log('Error parsing transaction from line:', line.substring(0, 100));
     }
   }
   
-  console.log(`Parsing summary: ${lines.length} total lines, ${skippedLines} skipped, ${linesWithDates} with dates, ${linesWithAmounts} with amounts, ${transactions.length} valid transactions`);
+  // Debug output
+  console.log(`\n=== PARSING SUMMARY ===`);
+  console.log(`Total lines scanned: ${linesScanned}`);
+  console.log(`Lines skipped (headers/footers): ${linesSkipped}`);
+  console.log(`Lines with valid date at start: ${linesWithDate}`);
+  console.log(`Lines with valid amount at end: ${linesWithAmount}`);
+  console.log(`Lines rejected (date out of range): ${linesRejectedDate}`);
+  console.log(`Successfully parsed transactions: ${transactions.length}`);
   
-  if (transactions.length === 0 && linesWithDates > 0) {
-    console.log('Sample lines with dates but no transactions:');
-    for (let i = 0; i < Math.min(5, lines.length); i++) {
-      if (lines[i].match(/\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}/)) {
-        console.log(`  Line ${i}: ${lines[i].substring(0, 100)}`);
-      }
-    }
+  // Show sample of first 3 parsed transactions
+  if (transactions.length > 0) {
+    console.log('\nSample parsed transactions:');
+    transactions.slice(0, 3).forEach((tx, i) => {
+      console.log(`  ${i+1}. Date: ${tx.date}, Desc: "${tx.description.substring(0, 40)}", Amount: ${tx.amount}`);
+    });
+  }
+  
+  // Show sample of rejected lines with reasons
+  if (rejectedLines.length > 0) {
+    console.log('\nSample rejected lines:');
+    rejectedLines.slice(0, 5).forEach((r, i) => {
+      console.log(`  ${i+1}. ${r.reason}: "${r.line}..."`);
+    });
+  }
+  
+  if (transactions.length === 0 && linesWithDate > 0) {
+    console.log('\n⚠️ WARNING: Found dates but no valid transactions. Check date ranges and skip patterns.');
   }
   
   return transactions;
