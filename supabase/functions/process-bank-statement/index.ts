@@ -1,7 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import * as XLSX from 'https://esm.sh/xlsx@0.18.5';
 import { z } from 'https://esm.sh/zod@3.22.4';
-import { getDocument, version } from 'https://esm.sh/pdfjs-dist@4.6.82/legacy/build/pdf.mjs';
+import { getDocument } from 'https://esm.sh/pdfjs-serverless@0.3.2';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -388,24 +388,12 @@ async function parseSpreadsheet(fileData: Blob): Promise<{ transactions: any[], 
 
 async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency: string }> {
   try {
-    console.log('Starting PDF parsing with PDF.js legacy...');
+    console.log('Starting PDF parsing with pdfjs-serverless...');
     
     const arrayBuffer = await fileData.arrayBuffer();
     const uint8Array = new Uint8Array(arrayBuffer);
     
-    console.log(`PDF.js version: ${version}`);
-    
-    const loadingTask = getDocument({
-      data: uint8Array,
-      useWorkerFetch: false,
-      isEvalSupported: false,
-      useSystemFonts: true,
-      disableFontFace: true,
-      cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/cmaps/',
-      cMapPacked: true,
-      standardFontDataUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/standard_fonts/'
-    } as any);
-    
+    const loadingTask = getDocument(uint8Array);
     const pdfDoc = await loadingTask.promise;
     console.log(`PDF loaded: ${pdfDoc.numPages} pages`);
     
