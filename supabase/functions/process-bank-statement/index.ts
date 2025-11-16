@@ -29,7 +29,7 @@ Deno.serve(async (req) => {
 
   let statementIdRef: string | null = null;
   try {
-    const { statementId } = await req.json();
+    const { statementId, reprocess = false } = await req.json();
     statementIdRef = statementId;
     console.log('Processing statement:', statementId);
 
@@ -82,10 +82,33 @@ Deno.serve(async (req) => {
     }
 
     // Update status to processing
-    await supabase
+    const { error: statusError } = await supabase
       .from('bank_statements')
-      .update({ processing_status: 'processing' })
+      .update({ 
+        processing_status: 'processing',
+        parsing_errors: null 
+      })
       .eq('id', statementId);
+
+    if (statusError) {
+      console.error('Status update error:', statusError);
+      throw statusError;
+    }
+
+    // If reprocessing, delete existing transactions
+    if (reprocess) {
+      console.log('Reprocessing: deleting existing transactions...');
+      const { error: deleteError } = await supabase
+        .from('transactions')
+        .delete()
+        .eq('statement_id', statementId);
+      
+      if (deleteError) {
+        console.error('Error deleting existing transactions:', deleteError);
+        throw deleteError;
+      }
+      console.log('Existing transactions deleted successfully');
+    }
 
     // Get statement details
     const { data: statement, error: stmtError } = await supabase

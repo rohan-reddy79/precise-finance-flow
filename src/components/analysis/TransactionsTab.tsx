@@ -4,9 +4,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Download, Filter, Loader2 } from "lucide-react";
+import { Download, Filter, Loader2, RefreshCw } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useProjectCurrency } from "@/hooks/useProjectCurrency";
+import { useToast } from "@/hooks/use-toast";
 
 interface TransactionsTabProps {
   projectId: string;
@@ -17,7 +18,9 @@ const TransactionsTab = ({ projectId }: TransactionsTabProps) => {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [transactions, setTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [reprocessing, setReprocessing] = useState(false);
   const { currencySymbol } = useProjectCurrency(projectId);
+  const { toast } = useToast();
 
   useEffect(() => {
     loadTransactions();
@@ -56,6 +59,72 @@ const TransactionsTab = ({ projectId }: TransactionsTabProps) => {
     }
   };
 
+  const reprocessStatements = async () => {
+    setReprocessing(true);
+    toast({
+      title: "Reprocessing statements",
+      description: "This may take a few moments...",
+    });
+
+    try {
+      // Fetch all statements for this project
+      const { data: statements, error: fetchError } = await supabase
+        .from('bank_statements')
+        .select('id, file_name, processing_status')
+        .eq('project_id', projectId);
+
+      if (fetchError) throw fetchError;
+
+      if (!statements || statements.length === 0) {
+        toast({
+          title: "No statements found",
+          description: "There are no statements to reprocess.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      let successCount = 0;
+      let failCount = 0;
+
+      // Process each statement
+      for (const statement of statements) {
+        try {
+          const { error } = await supabase.functions.invoke('process-bank-statement', {
+            body: { statementId: statement.id, reprocess: true }
+          });
+
+          if (error) {
+            console.error(`Failed to reprocess ${statement.file_name}:`, error);
+            failCount++;
+          } else {
+            successCount++;
+          }
+        } catch (err) {
+          console.error(`Error reprocessing ${statement.file_name}:`, err);
+          failCount++;
+        }
+      }
+
+      // Reload transactions
+      await loadTransactions();
+
+      toast({
+        title: "Reprocessing complete",
+        description: `Successfully reprocessed ${successCount} statement(s). ${failCount > 0 ? `${failCount} failed.` : ''}`,
+      });
+    } catch (error) {
+      console.error('Error reprocessing statements:', error);
+      toast({
+        title: "Reprocessing failed",
+        description: "An error occurred while reprocessing statements.",
+        variant: "destructive",
+      });
+    } finally {
+      setReprocessing(false);
+    }
+  };
+
   const filteredTransactions = transactions.filter(txn => {
     const matchesSearch = filter === "" || 
       txn.description.toLowerCase().includes(filter.toLowerCase()) ||
@@ -79,6 +148,19 @@ const TransactionsTab = ({ projectId }: TransactionsTabProps) => {
       <div className="flex justify-between items-center flex-wrap gap-2">
         <h2 className="text-2xl font-bold">All Transactions</h2>
         <div className="flex gap-2">
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={reprocessStatements}
+            disabled={reprocessing}
+          >
+            {reprocessing ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4 mr-2" />
+            )}
+            Reprocess
+          </Button>
           <Button variant="outline" size="sm" disabled>
             <Download className="h-4 w-4 mr-2" />
             Export
