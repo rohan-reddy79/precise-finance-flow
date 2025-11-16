@@ -1,10 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import * as XLSX from 'https://esm.sh/xlsx@0.18.5';
 import { z } from 'https://esm.sh/zod@3.22.4';
-import * as pdfjsLib from 'https://esm.sh/pdfjs-dist@4.6.82';
-
-// Configure PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://esm.sh/pdfjs-dist@4.6.82/build/pdf.worker.mjs';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -150,9 +146,7 @@ Deno.serve(async (req) => {
       transactions = parseResult.transactions;
       currency = parseResult.currency;
     } else if (fileType === 'pdf' || fileType.includes('pdf')) {
-      const parseResult = await parsePDF(fileData);
-      transactions = parseResult.transactions;
-      currency = parseResult.currency;
+      throw new Error('PDF_PARSING_NOT_SUPPORTED');
     } else {
       console.error('Unsupported file type:', fileType);
       throw new Error('UNSUPPORTED_FILE_TYPE');
@@ -246,7 +240,7 @@ Deno.serve(async (req) => {
       else if (error.message === 'FILE_TOO_LARGE') errorMessage = 'File size exceeds 10MB limit';
       else if (error.message === 'TOO_MANY_ROWS') errorMessage = 'File contains too many rows (max 10,000)';
       else if (error.message === 'INSERT_ERROR') errorMessage = 'Failed to save transactions to database';
-      else if (error.message === 'PDF_PARSING_NOT_AVAILABLE') errorMessage = 'PDF parsing is not yet supported. Please use CSV or Excel files for now.';
+      else if (error.message === 'PDF_PARSING_NOT_SUPPORTED') errorMessage = 'PDF files are not currently supported. Please export your bank statement as CSV or Excel format.';
       else errorMessage = error.message;
     }
 
@@ -387,185 +381,6 @@ async function parseSpreadsheet(fileData: Blob): Promise<{ transactions: any[], 
   }
 
   return { transactions, currency: detectedCurrency };
-}
-
-async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency: string }> {
-  try {
-    console.log('Starting PDF parsing with PDF.js...');
-    
-    // Convert Blob to Uint8Array for PDF.js
-    const arrayBuffer = await fileData.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
-    
-    // Load the PDF document
-    const loadingTask = pdfjsLib.getDocument({ data: uint8Array });
-    const pdfDoc = await loadingTask.promise;
-    
-    console.log(`PDF loaded: ${pdfDoc.numPages} pages`);
-    
-    // Extract text from all pages
-    let fullText = '';
-    for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
-      const page = await pdfDoc.getPage(pageNum);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items.map((item: any) => item.str).join(' ');
-      fullText += pageText + '\n';
-      console.log(`Page ${pageNum}: extracted ${pageText.length} characters`);
-    }
-    
-    console.log(`Total extracted text length: ${fullText.length} characters`);
-    
-    // Detect currency from the text
-    let currency = 'USD';
-    if (fullText.includes('₹') || fullText.includes('INR')) currency = 'INR';
-    else if (fullText.includes('$') || fullText.includes('USD')) currency = 'USD';
-    else if (fullText.includes('£') || fullText.includes('GBP')) currency = 'GBP';
-    else if (fullText.includes('€') || fullText.includes('EUR')) currency = 'EUR';
-    
-    console.log(`Detected currency: ${currency}`);
-    
-    // Parse transactions from the extracted text
-    const transactions = parseTransactionsFromText(fullText);
-    
-    console.log(`Parsed ${transactions.length} transactions from PDF`);
-    
-    if (transactions.length < 3) {
-      console.error('Too few transactions parsed, likely scanned or unsupported format');
-      throw new Error('Could not extract enough transactions from PDF (likely scanned or unsupported format). Please try CSV or Excel.');
-    }
-    
-    return { transactions, currency };
-  } catch (error) {
-    console.error('PDF parsing error:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    throw new Error(`Failed to parse PDF: ${errorMessage}`);
-  }
-}
-
-function parseTransactionsFromText(text: string): any[] {
-  const transactions: any[] = [];
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-  
-  console.log(`Processing ${lines.length} lines from text`);
-  
-  // Enhanced date patterns to match various formats
-  const datePatterns = [
-    /(\d{2}[\/\-\.]\d{2}[\/\-\.]\d{4})/,           // DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
-    /(\d{2}\s+[A-Za-z]{3}\s+\d{4})/,               // DD MMM YYYY
-    /(\d{2}\-[A-Za-z]{3}\-\d{4})/,                 // DD-MMM-YYYY (Indian format)
-    /(\d{4}[\/\-]\d{2}[\/\-]\d{2})/                // YYYY-MM-DD
-  ];
-  
-  // Amount pattern - matches Indian and international formats
-  const amountPattern = /[₹$£€]?\s*[\d,]+\.?\d*/g;
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    
-    // Skip header-like lines
-    if (line.toLowerCase().includes('date') && line.toLowerCase().includes('description')) {
-      continue;
-    }
-    if (line.toLowerCase().includes('opening balance') || line.toLowerCase().includes('closing balance')) {
-      continue;
-    }
-    
-    // Try to find a date in the line
-    let dateMatch = null;
-    let dateStr = '';
-    
-    for (const pattern of datePatterns) {
-      dateMatch = line.match(pattern);
-      if (dateMatch) {
-        dateStr = dateMatch[1];
-        break;
-      }
-    }
-    
-    if (!dateMatch) continue;
-    
-    // Extract amounts from the line
-    const amounts = line.match(amountPattern);
-    if (!amounts || amounts.length === 0) continue;
-    
-    // Extract description (text between date and amounts)
-    const dateIndex = line.indexOf(dateStr);
-    const firstAmountIndex = line.indexOf(amounts[0]);
-    let description = line.substring(dateIndex + dateStr.length, firstAmountIndex).trim();
-    
-    if (!description || description.length < 2) {
-      description = 'Unknown Transaction';
-    }
-    
-    // Parse amounts - typically last two are debit/credit or balance
-    const parsedAmounts = amounts.map(a => parseAmount(a)).filter(a => a > 0);
-    
-    if (parsedAmounts.length === 0) continue;
-    
-    // Enhanced debit/credit detection
-    const lineLC = line.toLowerCase();
-    const hasDebitKeyword = lineLC.includes('dr') || lineLC.includes('debit') || 
-                            lineLC.includes('withdrawal') || lineLC.includes('payment') ||
-                            lineLC.includes('wd');
-    const hasCreditKeyword = lineLC.includes('cr') || lineLC.includes('credit') || 
-                             lineLC.includes('deposit') || lineLC.includes('cd');
-    
-    // Use the first significant amount found
-    let amount = parsedAmounts[0];
-    let isDebit = hasDebitKeyword;
-    
-    // Determine transaction type with improved logic
-    if (hasCreditKeyword) {
-      isDebit = false;
-    } else if (hasDebitKeyword) {
-      isDebit = true;
-    } else if (parsedAmounts.length >= 2) {
-      // Check which amount appears first in the line
-      const firstAmountPos = line.indexOf(amounts[0]);
-      const secondAmountPos = line.indexOf(amounts[1]);
-      
-      if (parsedAmounts[0] > 0 && firstAmountPos < secondAmountPos) {
-        isDebit = true;
-      } else if (parsedAmounts[1] > 0) {
-        amount = parsedAmounts[1];
-        isDebit = false;
-      }
-    }
-    
-    const parsedDate = parseDate(dateStr);
-    if (!parsedDate) {
-      console.log(`Skipping line with invalid date: ${dateStr}`);
-      continue;
-    }
-    
-    // Skip invalid amounts
-    if (amount <= 0 || amount > 10000000) {
-      console.log(`Skipping line with invalid amount: ${amount}`);
-      continue;
-    }
-    
-    try {
-      const transactionData = {
-        date: parsedDate,
-        description: sanitizeString(description),
-        amount: isDebit ? -Math.abs(amount) : Math.abs(amount),
-        is_debit: isDebit,
-      };
-      
-      // Validate transaction
-      const validationResult = TransactionSchema.safeParse(transactionData);
-      if (validationResult.success) {
-        transactions.push(validationResult.data);
-      } else {
-        console.log('Skipped invalid transaction:', transactionData, validationResult.error);
-      }
-    } catch (error) {
-      console.log('Error parsing transaction from line:', line, error);
-    }
-  }
-  
-  console.log(`Successfully parsed ${transactions.length} valid transactions`);
-  return transactions;
 }
 
 function parseDate(dateStr: string): string {
