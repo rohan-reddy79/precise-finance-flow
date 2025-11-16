@@ -406,12 +406,30 @@ async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency
     for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
       const page = await pdfDoc.getPage(pageNum);
       const textContent = await page.getTextContent();
-      const pageText = textContent.items.map((item: any) => item.str).join(' ');
-      fullText += pageText + '\n';
+      
+      // Build text with better spacing preservation
+      let pageText = '';
+      let lastY = -1;
+      
+      for (const item of textContent.items) {
+        const currentItem = item as any;
+        if (!currentItem.str) continue;
+        
+        // Add newline if Y position changed significantly (new line in PDF)
+        if (lastY !== -1 && Math.abs(currentItem.transform[5] - lastY) > 2) {
+          pageText += '\n';
+        }
+        
+        pageText += currentItem.str + ' ';
+        lastY = currentItem.transform[5];
+      }
+      
+      fullText += pageText + '\n\n';
       console.log(`Page ${pageNum}: extracted ${pageText.length} characters`);
     }
     
     console.log(`Total extracted text length: ${fullText.length} characters`);
+    console.log(`Text sample (first 500 chars): ${fullText.substring(0, 500)}`);
     
     let currency = 'USD';
     if (fullText.includes('₹') || fullText.includes('INR')) currency = 'INR';
@@ -448,20 +466,39 @@ function parseTransactionsFromText(text: string): any[] {
   
   console.log(`Processing ${lines.length} lines from text`);
   
+  // Enhanced date patterns to match more formats
   const datePatterns = [
     /(\d{2}[\/\-\.]\d{2}[\/\-\.]\d{4})/,
     /(\d{2}\s+[A-Za-z]{3}\s+\d{4})/,
     /(\d{2}\-[A-Za-z]{3}\-\d{4})/,
-    /(\d{4}[\/\-]\d{2}[\/\-]\d{2})/
+    /(\d{4}[\/\-]\d{2}[\/\-]\d{2})/,
+    /(\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})/,  // "5 November 2024"
+    /(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/  // More flexible date
   ];
   
-  const amountPattern = /[₹$£€]?\s*[\d,]+\.?\d*/g;
+  // More robust amount pattern that handles currency symbols and formatting
+  const amountPattern = /(?:[₹$£€]\s*)?[\d,]+\.?\d{0,2}/g;
+  
+  let skippedLines = 0;
+  let linesWithDates = 0;
+  let linesWithAmounts = 0;
   
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     
-    if (line.toLowerCase().includes('date') && line.toLowerCase().includes('description')) continue;
-    if (line.toLowerCase().includes('opening balance') || line.toLowerCase().includes('closing balance')) continue;
+    // Skip header lines
+    if (line.toLowerCase().includes('date') && line.toLowerCase().includes('description')) {
+      skippedLines++;
+      continue;
+    }
+    if (line.toLowerCase().includes('opening balance') || line.toLowerCase().includes('closing balance')) {
+      skippedLines++;
+      continue;
+    }
+    if (line.toLowerCase().includes('statement') || line.toLowerCase().includes('account')) {
+      skippedLines++;
+      continue;
+    }
     
     let dateMatch = null;
     let dateStr = '';
@@ -470,6 +507,7 @@ function parseTransactionsFromText(text: string): any[] {
       dateMatch = line.match(pattern);
       if (dateMatch) {
         dateStr = dateMatch[1];
+        linesWithDates++;
         break;
       }
     }
@@ -478,6 +516,8 @@ function parseTransactionsFromText(text: string): any[] {
     
     const amounts = line.match(amountPattern);
     if (!amounts || amounts.length === 0) continue;
+    
+    linesWithAmounts++;
     
     const dateIndex = line.indexOf(dateStr);
     const firstAmountIndex = line.indexOf(amounts[0]);
@@ -538,7 +578,17 @@ function parseTransactionsFromText(text: string): any[] {
     }
   }
   
-  console.log(`Successfully parsed ${transactions.length} valid transactions`);
+  console.log(`Parsing summary: ${lines.length} total lines, ${skippedLines} skipped, ${linesWithDates} with dates, ${linesWithAmounts} with amounts, ${transactions.length} valid transactions`);
+  
+  if (transactions.length === 0 && linesWithDates > 0) {
+    console.log('Sample lines with dates but no transactions:');
+    for (let i = 0; i < Math.min(5, lines.length); i++) {
+      if (lines[i].match(/\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}/)) {
+        console.log(`  Line ${i}: ${lines[i].substring(0, 100)}`);
+      }
+    }
+  }
+  
   return transactions;
 }
 
