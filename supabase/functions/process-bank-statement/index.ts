@@ -743,6 +743,7 @@ function parseAmount(value: any): number {
 function categorizeTransaction(description: string, rules: any[]): string {
   const desc = description.toLowerCase();
   
+  // First, check custom user rules
   for (const rule of rules) {
     const keyword = rule.keyword.toLowerCase();
     if (desc.includes(keyword)) {
@@ -750,20 +751,24 @@ function categorizeTransaction(description: string, rules: any[]): string {
     }
   }
   
-  // Enhanced default categorization with more keywords
-  if (desc.match(/uber|lyft|taxi|cab|train|flight|airline|bus|parking|metro|transit|toll|gas station|shell|bp|exxon|chevron|fuel|hertz|rental|car/)) 
+  // Travel - expanded with rideshares, car rentals, hotels, airlines
+  if (desc.match(/uber|uber\s*eats|lyft|taxi|cab|train|flight|airline|airplane|bus|parking|metro|transit|toll|gas\s*station|shell|bp|exxon|chevron|mobil|texaco|valero|fuel|gasoline|hertz|enterprise|avis|budget|rental|car\s*rent|airbnb|booking\.com|expedia|hotels?\.com|marriott|hilton|ihg|hyatt|best\s*western|delta|united|american\s*airlines|southwest|jetblue|spirit|frontier|alaska\s*air|indigo|airasia/)) 
     return 'Travel';
   
-  if (desc.match(/school|university|college|course|tuition|book|education|learning|coursera|udemy|textbook|student/)) 
+  // Education - textbooks, online courses, school supplies
+  if (desc.match(/school|university|college|course|tuition|book|education|learning|coursera|udemy|udacity|pluralsight|skillshare|khan\s*academy|textbook|student|academy|library/)) 
     return 'Education';
   
-  if (desc.match(/netflix|spotify|hulu|disney|prime video|cinema|movie|concert|game|steam|playstation|xbox|entertainment|theater|event|ticket/)) 
+  // Entertainment - streaming, gaming, movies, music
+  if (desc.match(/netflix|spotify|hulu|disney|disney\+|prime\s*video|amazon\s*prime|apple\s*tv|youtube|youtube\s*premium|paramount|hbo|max|peacock|cinema|movie|theater|theatre|amc|regal|imax|concert|show|event|game|gaming|steam|playstation|xbox|nintendo|twitch|entertainment|ticket|ticketmaster|fandango|stubhub|apple\.com\/bill|itunes|google\s*play/)) 
     return 'Entertainment';
   
-  if (desc.match(/restaurant|cafe|coffee|starbucks|dunkin|food|grocery|supermarket|walmart|target|whole foods|trader joe|safeway|kroger|publix|pizza|burger|mcdonald|subway|chipotle|panera|domino|taco bell|wendy|kfc|chick|sonic|arbys|popeyes|five guys|shake shack/)) 
+  // Food - restaurants, delivery, groceries, fast food
+  if (desc.match(/restaurant|cafe|coffee|starbucks|dunkin|dunkin'|peet|caribou|food|grocery|groceries|supermarket|market|walmart|target|whole\s*foods|trader\s*joe|safeway|kroger|publix|albertsons|costco|sam'?s\s*club|aldi|lidl|pizza|burger|mcdonald|subway|chipotle|panera|domino|papa\s*john|taco\s*bell|wendy|kfc|chick-fil-a|popeyes|five\s*guys|shake\s*shack|in-n-out|whataburger|sonic|arby|jack\s*in\s*the|carl|hardee|dairy\s*queen|uber\s*eats|doordash|grubhub|postmates|seamless|deliveroo|zomato|swiggy|instacart|just\s*eat/)) 
     return 'Food';
   
-  if (desc.match(/atm|cash|withdrawal|cashback/)) 
+  // ATM - cash withdrawals
+  if (desc.match(/atm|cash|withdrawal|cashback|cash\s*advance/)) 
     return 'ATM';
   
   return 'Miscellaneous';
