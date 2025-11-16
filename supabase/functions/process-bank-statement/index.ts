@@ -140,6 +140,8 @@ Deno.serve(async (req) => {
     // Parse based on file type
     let transactions: any[] = [];
     let currency = 'USD';
+    let statementPeriodStart: string | null = null;
+    let statementPeriodEnd: string | null = null;
     const fileType = statement.file_type.toLowerCase();
 
     if (fileType === 'csv' || fileType.includes('spreadsheet') || fileType.includes('excel')) {
@@ -150,6 +152,8 @@ Deno.serve(async (req) => {
       const parseResult = await parsePDF(fileData);
       transactions = parseResult.transactions;
       currency = parseResult.currency;
+      statementPeriodStart = parseResult.statementPeriodStart || null;
+      statementPeriodEnd = parseResult.statementPeriodEnd || null;
     } else {
       console.error('Unsupported file type:', fileType);
       throw new Error('UNSUPPORTED_FILE_TYPE');
@@ -196,9 +200,20 @@ Deno.serve(async (req) => {
 
     // Calculate aggregates
     const totalAmount = categorizedTransactions.reduce((sum, tx) => sum + tx.amount, 0);
-    const dates = categorizedTransactions.map(tx => new Date(tx.transaction_date));
-    const periodStart = new Date(Math.min(...dates.map(d => d.getTime())));
-    const periodEnd = new Date(Math.max(...dates.map(d => d.getTime())));
+    
+    // Use extracted statement period if available, otherwise calculate from transactions
+    let periodStart, periodEnd;
+    
+    if (statementPeriodStart && statementPeriodEnd) {
+      periodStart = statementPeriodStart;
+      periodEnd = statementPeriodEnd;
+      console.log('Using extracted statement period from PDF header');
+    } else {
+      const dates = categorizedTransactions.map(tx => new Date(tx.transaction_date));
+      periodStart = new Date(Math.min(...dates.map(d => d.getTime()))).toISOString().split('T')[0];
+      periodEnd = new Date(Math.max(...dates.map(d => d.getTime()))).toISOString().split('T')[0];
+      console.log('Calculated statement period from transaction dates');
+    }
 
     // Update bank_statements with aggregates
     await supabase
@@ -207,8 +222,8 @@ Deno.serve(async (req) => {
         processing_status: 'completed',
         total_transactions: transactions.length,
         total_amount: totalAmount,
-        statement_period_start: periodStart.toISOString().split('T')[0],
-        statement_period_end: periodEnd.toISOString().split('T')[0],
+        statement_period_start: periodStart,
+        statement_period_end: periodEnd,
         processed_at: new Date().toISOString(),
         currency: currency,
       })
@@ -386,7 +401,7 @@ async function parseSpreadsheet(fileData: Blob): Promise<{ transactions: any[], 
   return { transactions, currency: detectedCurrency };
 }
 
-async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency: string }> {
+async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency: string, statementPeriodStart?: string | null, statementPeriodEnd?: string | null }> {
   try {
     console.log('Starting PDF parsing with pdfjs-serverless...');
     
@@ -439,6 +454,27 @@ async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency
     
     console.log(`Detected currency: ${currency}`);
     
+    // Extract statement period from header text
+    let statementPeriodStart = null;
+    let statementPeriodEnd = null;
+    
+    const periodPattern = /for\s+(\w+\s+\d{1,2},\s+\d{4})\s+to\s+(\w+\s+\d{1,2},\s+\d{4})/i;
+    const periodMatch = fullText.match(periodPattern);
+    
+    if (periodMatch) {
+      const startDateStr = periodMatch[1]; // "October 22, 2024"
+      const endDateStr = periodMatch[2];   // "November 18, 2024"
+      
+      const startDate = new Date(startDateStr);
+      const endDate = new Date(endDateStr);
+      
+      if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+        statementPeriodStart = startDate.toISOString().split('T')[0];
+        statementPeriodEnd = endDate.toISOString().split('T')[0];
+        console.log(`Extracted statement period: ${statementPeriodStart} to ${statementPeriodEnd}`);
+      }
+    }
+    
     const transactions = parseTransactionsFromText(fullText);
     console.log(`Parsed ${transactions.length} transactions from PDF`);
     
@@ -446,7 +482,7 @@ async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency
       throw new Error('Could not extract enough transactions from PDF. This file may be scanned or contain unextractable text. Please export your bank statement as CSV or Excel and re-upload.');
     }
     
-    return { transactions, currency };
+    return { transactions, currency, statementPeriodStart, statementPeriodEnd };
   } catch (error) {
     console.error('PDF parsing error:', error);
     // Provide user-friendly error messages
@@ -521,7 +557,33 @@ function parseTransactionsFromText(text: string): any[] {
     
     const dateIndex = line.indexOf(dateStr);
     const firstAmountIndex = line.indexOf(amounts[0]);
-    let description = line.substring(dateIndex + dateStr.length, firstAmountIndex).trim();
+    
+    // Extract everything between date and amount
+    let rawDescription = line.substring(dateIndex + dateStr.length, firstAmountIndex).trim();
+    
+    // Clean up common transaction type keywords that appear at the end
+    const typeKeywords = ['PURCHASE', 'DEBIT', 'WITHDRAWAL', 'ATM', 'TRANSFER', 'PAYMENT', 'DEPOSIT', 'CREDIT', 'ACH', 'CHECK'];
+    let description = rawDescription;
+    
+    // Try to extract merchant name before type keywords
+    for (const keyword of typeKeywords) {
+      const keywordIndex = rawDescription.toUpperCase().lastIndexOf(keyword);
+      if (keywordIndex > 0) {
+        // Take everything before the keyword as merchant name
+        description = rawDescription.substring(0, keywordIndex).trim();
+        break;
+      }
+    }
+    
+    // If description is still empty or very short, use the full raw description
+    if (!description || description.length < 3) {
+      description = rawDescription || 'Unknown Transaction';
+    }
+    
+    // Additional cleanup - remove redundant date references
+    description = description.replace(/\d{2}\/\d{2}\/\d{2,4}/g, '').trim();
+    // Remove transaction reference numbers like "1114" or "0406"
+    description = description.replace(/\b\d{4}\b/g, '').trim();
     
     if (!description || description.length < 2) {
       description = 'Unknown Transaction';
@@ -557,7 +619,10 @@ function parseTransactionsFromText(text: string): any[] {
     }
     
     const parsedDate = parseDate(dateStr);
-    if (!parsedDate) continue;
+    if (!parsedDate) {
+      console.log(`Skipping transaction - failed to parse date: ${dateStr}`);
+      continue;
+    }
     
     if (amount <= 0 || amount > 10000000) continue;
     
@@ -592,30 +657,69 @@ function parseTransactionsFromText(text: string): any[] {
   return transactions;
 }
 
-function parseDate(dateStr: string): string {
-  if (!dateStr) return new Date().toISOString().split('T')[0];
+function parseDate(dateStr: string): string | null {
+  if (!dateStr) return null;
   
   try {
-    // Try various date formats
-    const date = new Date(dateStr);
-    if (!isNaN(date.getTime())) {
-      return date.toISOString().split('T')[0];
+    // Handle MM/DD/YY format explicitly (common in US bank statements)
+    const mmddyyMatch = dateStr.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2})$/);
+    if (mmddyyMatch) {
+      let [_, month, day, year] = mmddyyMatch;
+      // Convert 2-digit year to 4-digit (24 -> 2024, 25 -> 2025)
+      const fullYear = parseInt(year) >= 50 ? `19${year}` : `20${year}`;
+      const parsedDate = new Date(`${fullYear}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
+      if (!isNaN(parsedDate.getTime())) {
+        return parsedDate.toISOString().split('T')[0];
+      }
+    }
+    
+    // Handle MM/DD/YYYY format
+    const mmddyyyyMatch = dateStr.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+    if (mmddyyyyMatch) {
+      const [_, month, day, year] = mmddyyyyMatch;
+      const parsedDate = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
+      if (!isNaN(parsedDate.getTime())) {
+        return parsedDate.toISOString().split('T')[0];
+      }
+    }
+    
+    // Handle "5 November 2024" or "5 Nov 2024" format
+    const textDateMatch = dateStr.match(/^(\d{1,2})\s+(\w+)\s+(\d{4})$/);
+    if (textDateMatch) {
+      const date = new Date(dateStr);
+      if (!isNaN(date.getTime())) {
+        return date.toISOString().split('T')[0];
+      }
     }
     
     // Try DD/MM/YYYY format
     const parts = dateStr.split(/[\/\-\.]/);
     if (parts.length === 3) {
-      const [day, month, year] = parts;
-      const parsedDate = new Date(`${year}-${month}-${day}`);
+      // Try as MM/DD/YYYY first
+      const [first, second, third] = parts;
+      let parsedDate = new Date(`${third}-${first.padStart(2, '0')}-${second.padStart(2, '0')}`);
+      if (!isNaN(parsedDate.getTime())) {
+        return parsedDate.toISOString().split('T')[0];
+      }
+      // Try as DD/MM/YYYY
+      parsedDate = new Date(`${third}-${second.padStart(2, '0')}-${first.padStart(2, '0')}`);
       if (!isNaN(parsedDate.getTime())) {
         return parsedDate.toISOString().split('T')[0];
       }
     }
+    
+    // Try standard JavaScript date parsing as last resort
+    const date = new Date(dateStr);
+    if (!isNaN(date.getTime())) {
+      return date.toISOString().split('T')[0];
+    }
   } catch (e) {
-    console.error('Date parsing error:', e);
+    console.error('Date parsing error for:', dateStr, e);
   }
   
-  return new Date().toISOString().split('T')[0];
+  // Return null instead of today's date - caller should handle this
+  console.log(`Failed to parse date: ${dateStr}`);
+  return null;
 }
 
 function parseAmount(value: any): number {
@@ -646,12 +750,21 @@ function categorizeTransaction(description: string, rules: any[]): string {
     }
   }
   
-  // Default categorization based on keywords
-  if (desc.match(/uber|lyft|taxi|train|flight|bus|parking/)) return 'Travel';
-  if (desc.match(/school|university|course|tuition|book/)) return 'Education';
-  if (desc.match(/netflix|spotify|cinema|concert|game/)) return 'Entertainment';
-  if (desc.match(/restaurant|cafe|food|grocery|supermarket/)) return 'Food';
-  if (desc.match(/atm|cash|withdrawal/)) return 'ATM';
+  // Enhanced default categorization with more keywords
+  if (desc.match(/uber|lyft|taxi|cab|train|flight|airline|bus|parking|metro|transit|toll|gas station|shell|bp|exxon|chevron|fuel|hertz|rental|car/)) 
+    return 'Travel';
+  
+  if (desc.match(/school|university|college|course|tuition|book|education|learning|coursera|udemy|textbook|student/)) 
+    return 'Education';
+  
+  if (desc.match(/netflix|spotify|hulu|disney|prime video|cinema|movie|concert|game|steam|playstation|xbox|entertainment|theater|event|ticket/)) 
+    return 'Entertainment';
+  
+  if (desc.match(/restaurant|cafe|coffee|starbucks|dunkin|food|grocery|supermarket|walmart|target|whole foods|trader joe|safeway|kroger|publix|pizza|burger|mcdonald|subway|chipotle|panera|domino|taco bell|wendy|kfc|chick|sonic|arbys|popeyes|five guys|shake shack/)) 
+    return 'Food';
+  
+  if (desc.match(/atm|cash|withdrawal|cashback/)) 
+    return 'ATM';
   
   return 'Miscellaneous';
 }
