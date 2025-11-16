@@ -1,10 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import * as XLSX from 'https://esm.sh/xlsx@0.18.5';
 import { z } from 'https://esm.sh/zod@3.22.4';
-import { getDocument, GlobalWorkerOptions, version } from 'https://esm.sh/pdfjs-dist@4.0.379/legacy/build/pdf.mjs';
-
-// Configure PDF.js worker (required in edge runtime)
-GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.mjs';
+import { getDocument, version } from 'https://esm.sh/pdfjs-dist@4.6.82/legacy/build/pdf.mjs';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -403,10 +400,19 @@ async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency
       useWorkerFetch: false,
       isEvalSupported: false,
       useSystemFonts: true,
-    });
+      disableFontFace: true,
+      cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/cmaps/',
+      cMapPacked: true,
+      standardFontDataUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.6.82/standard_fonts/'
+    } as any);
     
     const pdfDoc = await loadingTask.promise;
     console.log(`PDF loaded: ${pdfDoc.numPages} pages`);
+    
+    // Limit PDF page count to prevent processing issues
+    if (pdfDoc.numPages > 30) {
+      throw new Error('PDF has too many pages (maximum 30). Please upload a smaller PDF or export as CSV/Excel format.');
+    }
     
     let fullText = '';
     for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
@@ -431,13 +437,20 @@ async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency
     console.log(`Parsed ${transactions.length} transactions from PDF`);
     
     if (transactions.length < 3) {
-      throw new Error('Could not extract enough transactions from PDF. Please try CSV or Excel format.');
+      throw new Error('Could not extract enough transactions from PDF. This file may be scanned or contain unextractable text. Please export your bank statement as CSV or Excel and re-upload.');
     }
     
     return { transactions, currency };
   } catch (error) {
     console.error('PDF parsing error:', error);
-    throw new Error(`Failed to parse PDF: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    // Provide user-friendly error messages
+    if (error instanceof Error && error.message.includes('too many pages')) {
+      throw error;
+    }
+    if (error instanceof Error && error.message.includes('Could not extract enough')) {
+      throw error;
+    }
+    throw new Error('Failed to parse PDF. This file may be scanned or contain unextractable text. Please export your bank statement as CSV or Excel and re-upload.');
   }
 }
 
