@@ -31,8 +31,9 @@ Deno.serve(async (req) => {
   try {
     const { statementId, reprocess = false } = await req.json();
     statementIdRef = statementId;
-    console.log('Processing statement:', statementId, reprocess ? '(REPROCESS)' : '');
+    console.log('Processing statement:', statementId);
 
+    // Authenticate user
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       return new Response(
@@ -45,6 +46,7 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // Verify user token and ownership
     const token = authHeader.replace('Bearer ', '');
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
 
@@ -56,6 +58,7 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Verify statement ownership
     const { data: ownershipCheck, error: ownershipError } = await supabase
       .from('bank_statements')
       .select('user_id')
@@ -78,22 +81,13 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Update status and reset fields for reprocessing
-    const updateFields: any = { 
-      processing_status: 'processing',
-      parsing_errors: null
-    };
-    
-    if (reprocess) {
-      updateFields.statement_period_start = null;
-      updateFields.statement_period_end = null;
-      updateFields.total_transactions = 0;
-      updateFields.total_amount = 0;
-    }
-
+    // Update status to processing
     const { error: statusError } = await supabase
       .from('bank_statements')
-      .update(updateFields)
+      .update({ 
+        processing_status: 'processing',
+        parsing_errors: null 
+      })
       .eq('id', statementId);
 
     if (statusError) {
@@ -101,6 +95,7 @@ Deno.serve(async (req) => {
       throw statusError;
     }
 
+    // If reprocessing, delete existing transactions
     if (reprocess) {
       console.log('Reprocessing: deleting existing transactions...');
       const { error: deleteError } = await supabase
@@ -115,704 +110,759 @@ Deno.serve(async (req) => {
       console.log('Existing transactions deleted successfully');
     }
 
-    const { data: statement } = await supabase
+    // Get statement details
+    const { data: statement, error: stmtError } = await supabase
       .from('bank_statements')
       .select('*')
       .eq('id', statementId)
       .single();
 
-    if (!statement) {
-      throw new Error('Statement not found after ownership verification');
+    if (stmtError || !statement) {
+      console.error('Statement fetch error:', stmtError);
+      throw new Error('STATEMENT_ERROR');
     }
 
-    console.log('Downloading file from storage:', statement.file_path);
-    const { data: fileData, error: downloadError } = await supabase.storage
+    console.log('Downloading file:', statement.file_path);
+
+    // Download file from storage
+    const { data: fileData, error: downloadError } = await supabase
+      .storage
       .from('bank-statements')
       .download(statement.file_path);
 
-    if (downloadError) {
-      console.error('Download error:', downloadError);
-      throw downloadError;
+    if (downloadError || !fileData) {
+      console.error('File download error:', downloadError);
+      throw new Error('FILE_DOWNLOAD_ERROR');
     }
 
-    const fileBuffer = await fileData.arrayBuffer();
-    const fileArray = new Uint8Array(fileBuffer);
+    // Validate file signature (magic bytes)
+    const buffer = await fileData.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    
+    if (bytes.length < 4) {
+      console.error('File too small or corrupted');
+      throw new Error('INVALID_FILE_SIGNATURE');
+    }
 
-    const signature = Array.from(fileArray.slice(0, 4))
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('').toUpperCase();
+    // Check file signatures
+    const isXlsx = bytes[0] === 0x50 && bytes[1] === 0x4B; // XLSX starts with PK (ZIP signature)
+    const isXls = bytes[0] === 0xD0 && bytes[1] === 0xCF; // XLS starts with OLE2 signature
+    const isCsv = bytes[0] >= 0x20 && bytes[0] <= 0x7E; // CSV starts with printable ASCII
+    const isPdf = bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46; // PDF starts with %PDF
+    
+    if (!isXlsx && !isXls && !isCsv && !isPdf) {
+      console.error('Invalid file signature detected:', { 
+        firstBytes: Array.from(bytes.slice(0, 4)),
+        fileType: statement.file_type 
+      });
+      throw new Error('INVALID_FILE_SIGNATURE');
+    }
 
-    console.log('File signature:', signature, 'Type:', statement.file_type);
+    console.log('File signature validated:', { isXlsx, isXls, isCsv, isPdf });
 
-    let parsedData: { transactions: any[], currency: string | null, period?: { start: string, end: string } };
+    // Parse based on file type
+    let transactions: any[] = [];
+    let currency = 'USD';
+    let statementPeriodStart: string | null = null;
+    let statementPeriodEnd: string | null = null;
+    const fileType = statement.file_type.toLowerCase();
 
-    if (signature.startsWith('504B03') || signature.startsWith('D0CF11')) {
-      console.log('Parsing as spreadsheet...');
-      parsedData = parseSpreadsheet(fileArray);
-    } else if (signature.startsWith('25504446')) {
-      console.log('Parsing as PDF...');
-      parsedData = await parsePDF(fileArray);
-    } else if (statement.file_type === 'text/csv' || statement.file_name.endsWith('.csv')) {
-      console.log('Parsing as CSV...');
-      parsedData = parseSpreadsheet(fileArray);
+    if (fileType === 'csv' || fileType.includes('spreadsheet') || fileType.includes('excel')) {
+      const parseResult = await parseSpreadsheet(fileData);
+      transactions = parseResult.transactions;
+      currency = parseResult.currency;
+    } else if (fileType === 'pdf' || fileType.includes('pdf')) {
+      const parseResult = await parsePDF(fileData);
+      transactions = parseResult.transactions;
+      currency = parseResult.currency;
+      statementPeriodStart = parseResult.statementPeriodStart || null;
+      statementPeriodEnd = parseResult.statementPeriodEnd || null;
     } else {
-      throw new Error(`Unsupported file format. Signature: ${signature}. Please upload CSV, Excel (XLSX/XLS), or PDF files.`);
+      console.error('Unsupported file type:', fileType);
+      throw new Error('UNSUPPORTED_FILE_TYPE');
     }
 
-    console.log(`Parsed ${parsedData.transactions.length} transactions`);
-    console.log('Currency detected:', parsedData.currency);
+    console.log(`Parsed ${transactions.length} transactions`);
 
-    if (parsedData.transactions.length === 0) {
-      throw new Error('No valid transactions found. Please check the file format and content.');
+    if (transactions.length === 0) {
+      console.error('No transactions found in file');
+      throw new Error('EMPTY_FILE');
     }
 
+    // Get categorization rules for the user
     const { data: rules } = await supabase
       .from('categorization_rules')
-      .select('keyword, category')
-      .eq('user_id', user.id)
+      .select('*')
+      .eq('user_id', statement.user_id)
       .eq('is_active', true);
 
-    const categorizationRules = rules || [];
+    // Categorize and insert transactions
+    const categorizedTransactions = transactions.map(tx => {
+      const category = categorizeTransaction(tx.description, rules || []);
+      return {
+        user_id: statement.user_id,
+        statement_id: statementId,
+        transaction_date: tx.date,
+        description: tx.description,
+        amount: Math.abs(tx.amount),
+        is_debit: tx.amount < 0 || tx.is_debit,
+        category: category,
+        merchant: extractMerchant(tx.description),
+      };
+    });
 
-    const transactionsToInsert = parsedData.transactions.map(tx => ({
-      user_id: user.id,
-      statement_id: statementId,
-      transaction_date: tx.date,
-      description: tx.description,
-      amount: Math.abs(tx.amount),
-      is_debit: tx.is_debit,
-      merchant: tx.merchant || null,
-      category: categorizeTransaction(tx.description, categorizationRules),
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    }));
-
-    // Deduplicate
-    const uniqueTransactions = deduplicateTransactions(transactionsToInsert);
-    console.log(`Inserting ${uniqueTransactions.length} unique transactions (${transactionsToInsert.length - uniqueTransactions.length} duplicates removed)`);
-
+    // Bulk insert transactions
     const { error: insertError } = await supabase
       .from('transactions')
-      .insert(uniqueTransactions);
+      .insert(categorizedTransactions);
 
     if (insertError) {
-      console.error('Insert error:', insertError);
-      throw insertError;
+      console.error('Transaction insert error:', insertError);
+      throw new Error('INSERT_ERROR');
     }
 
-    // Calculate period from data or use extracted period
-    let periodStart: string;
-    let periodEnd: string;
-
-    if (parsedData.period) {
-      periodStart = parsedData.period.start;
-      periodEnd = parsedData.period.end;
-      console.log('Using header-extracted period:', periodStart, 'to', periodEnd);
+    // Calculate aggregates
+    const totalAmount = categorizedTransactions.reduce((sum, tx) => sum + tx.amount, 0);
+    
+    // Use extracted statement period if available, otherwise calculate from transactions
+    let periodStart, periodEnd;
+    
+    if (statementPeriodStart && statementPeriodEnd) {
+      periodStart = statementPeriodStart;
+      periodEnd = statementPeriodEnd;
+      console.log('Using extracted statement period from PDF header');
     } else {
-      const dates = parsedData.transactions.map(t => t.date).sort();
-      periodStart = dates[0];
-      periodEnd = dates[dates.length - 1];
-      console.log('Using transaction min/max for period:', periodStart, 'to', periodEnd);
+      const dates = categorizedTransactions.map(tx => new Date(tx.transaction_date));
+      periodStart = new Date(Math.min(...dates.map(d => d.getTime()))).toISOString().split('T')[0];
+      periodEnd = new Date(Math.max(...dates.map(d => d.getTime()))).toISOString().split('T')[0];
+      console.log('Calculated statement period from transaction dates');
     }
 
-    const totalAmount = parsedData.transactions.reduce((sum, t) => sum + Math.abs(t.amount), 0);
-
-    const { error: updateError } = await supabase
+    // Update bank_statements with aggregates
+    await supabase
       .from('bank_statements')
       .update({
         processing_status: 'completed',
-        processed_at: new Date().toISOString(),
-        total_transactions: uniqueTransactions.length,
+        total_transactions: transactions.length,
         total_amount: totalAmount,
         statement_period_start: periodStart,
         statement_period_end: periodEnd,
-        currency: parsedData.currency || 'USD'
+        processed_at: new Date().toISOString(),
+        currency: currency,
       })
       .eq('id', statementId);
 
-    if (updateError) {
-      console.error('Final update error:', updateError);
-      throw updateError;
-    }
-
     console.log('Processing completed successfully');
+
     return new Response(
       JSON.stringify({
         success: true,
-        transactionsCount: uniqueTransactions.length,
-        periodStart,
-        periodEnd
+        transactionsProcessed: transactions.length,
+        totalAmount,
       }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
-  } catch (error: any) {
-    console.error('Processing error:', error);
-    
-    if (statementIdRef) {
-      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-      const supabase = createClient(supabaseUrl, supabaseKey);
+  } catch (error) {
+    console.error('Processing error details:', {
+      error: error instanceof Error ? error.message : 'Unknown',
+      stack: error instanceof Error ? error.stack : undefined,
+      timestamp: new Date().toISOString()
+    });
 
-      await supabase
-        .from('bank_statements')
-        .update({
-          processing_status: 'failed',
-          parsing_errors: error.message
-        })
-        .eq('id', statementIdRef);
+    // Update status to failed with detailed error
+    let errorMessage = 'Processing failed';
+    if (error instanceof Error) {
+      if (error.message === 'STATEMENT_ERROR') errorMessage = 'Could not access bank statement';
+      else if (error.message === 'FILE_DOWNLOAD_ERROR') errorMessage = 'Failed to download file from storage';
+      else if (error.message === 'INVALID_FILE_SIGNATURE') errorMessage = 'Invalid file format or corrupted file';
+      else if (error.message === 'UNSUPPORTED_FILE_TYPE') errorMessage = 'Unsupported file type';
+      else if (error.message === 'EMPTY_FILE') errorMessage = 'No transactions found in the file';
+      else if (error.message === 'FILE_TOO_LARGE') errorMessage = 'File size exceeds 10MB limit';
+      else if (error.message === 'TOO_MANY_ROWS') errorMessage = 'File contains too many rows (max 10,000)';
+      else if (error.message === 'INSERT_ERROR') errorMessage = 'Failed to save transactions to database';
+      else if (error.message === 'PDF_PARSING_NOT_SUPPORTED') errorMessage = 'PDF files are not currently supported. Please export your bank statement as CSV or Excel format.';
+      else errorMessage = error.message;
+    }
+
+    // Try to update statement status
+    try {
+      if (statementIdRef) {
+        const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+        const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+        const supabase = createClient(supabaseUrl, supabaseKey);
+
+        await supabase
+          .from('bank_statements')
+          .update({
+            processing_status: 'failed',
+            parsing_errors: errorMessage,
+          })
+          .eq('id', statementIdRef);
+        
+        console.log(`Updated statement ${statementIdRef} status to failed: ${errorMessage}`);
+      }
+    } catch (updateError) {
+      console.error('Failed to update error status:', updateError);
     }
 
     return new Response(
       JSON.stringify({
-        error: error.message || 'Processing failed',
-        code: ErrorCodes.PROCESSING_FAILED,
-        details: error.toString()
+        error: errorMessage,
+        code: ErrorCodes.PROCESSING_FAILED
       }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      }
     );
   }
 });
 
-function parseSpreadsheet(fileArray: Uint8Array): { transactions: any[], currency: string | null } {
-  const workbook = XLSX.read(fileArray, { type: 'array' });
-  const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-  const rawData: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-
-  if (rawData.length > 10000) {
-    throw new Error('File too large. Maximum 10,000 rows allowed.');
+async function parseSpreadsheet(fileData: Blob): Promise<{ transactions: any[], currency: string }> {
+  const arrayBuffer = await fileData.arrayBuffer();
+  
+  // Validate file size (max 10MB)
+  if (arrayBuffer.byteLength > 10 * 1024 * 1024) {
+    throw new Error('FILE_TOO_LARGE');
+  }
+  
+  const workbook = XLSX.read(new Uint8Array(arrayBuffer), { 
+    type: 'array',
+    cellFormula: false, // Disable formula parsing for security
+    cellHTML: false // Disable HTML parsing
+  });
+  
+  const sheetName = workbook.SheetNames[0];
+  const worksheet = workbook.Sheets[sheetName];
+  const jsonData = XLSX.utils.sheet_to_json(worksheet, { raw: false });
+  
+  // Detect currency from file content
+  const allText = JSON.stringify(jsonData).toLowerCase();
+  let detectedCurrency = 'USD'; // Default
+  
+  if (allText.includes('rupee') || allText.includes('inr') || allText.includes('₹') || allText.includes('rs.')) {
+    detectedCurrency = 'INR';
+  } else if (allText.includes('gbp') || allText.includes('£') || allText.includes('pound')) {
+    detectedCurrency = 'GBP';
+  } else if (allText.includes('eur') || allText.includes('€') || allText.includes('euro')) {
+    detectedCurrency = 'EUR';
+  } else if (allText.includes('usd') || allText.includes('$') || allText.includes('dollar')) {
+    detectedCurrency = 'USD';
   }
 
-  const allText = rawData.slice(0, 50).flat().join(' ').toUpperCase();
-  const currency = detectCurrency(allText);
+  // Validate row count (max 10,000 rows)
+  if (jsonData.length > 10000) {
+    throw new Error('TOO_MANY_ROWS');
+  }
 
   const transactions: any[] = [];
-  let dateCol = -1, descCol = -1, amountCol = -1, debitCol = -1, creditCol = -1;
 
-  for (let i = 0; i < Math.min(10, rawData.length); i++) {
-    const row = rawData[i];
-    if (!row) continue;
+  for (const row of jsonData) {
+    const rowData: any = row;
+    
+    // Find date column (case insensitive)
+    const dateKey = Object.keys(rowData).find(k => 
+      k.toLowerCase().includes('date') || k.toLowerCase().includes('transaction')
+    );
+    
+    // Find amount/debit/credit columns
+    const amountKey = Object.keys(rowData).find(k => 
+      k.toLowerCase().includes('amount')
+    );
+    const debitKey = Object.keys(rowData).find(k => 
+      k.toLowerCase().includes('debit') || k.toLowerCase().includes('withdrawal')
+    );
+    const creditKey = Object.keys(rowData).find(k => 
+      k.toLowerCase().includes('credit') || k.toLowerCase().includes('deposit')
+    );
+    
+    // Find description column
+    const descKey = Object.keys(rowData).find(k => 
+      k.toLowerCase().includes('description') || 
+      k.toLowerCase().includes('narrative') ||
+      k.toLowerCase().includes('details')
+    );
 
-    row.forEach((cell, idx) => {
-      const cellStr = String(cell || '').toLowerCase();
-      if (cellStr.includes('date') && dateCol === -1) dateCol = idx;
-      if ((cellStr.includes('description') || cellStr.includes('narration') || cellStr.includes('particulars')) && descCol === -1) descCol = idx;
-      if (cellStr.includes('amount') && amountCol === -1) amountCol = idx;
-      if (cellStr.includes('debit') && debitCol === -1) debitCol = idx;
-      if (cellStr.includes('credit') && creditCol === -1) creditCol = idx;
-    });
+    if (!dateKey || !descKey) continue;
 
-    if (dateCol !== -1 && descCol !== -1 && (amountCol !== -1 || (debitCol !== -1 && creditCol !== -1))) {
-      console.log(`Columns detected at row ${i}: date=${dateCol}, desc=${descCol}, amount=${amountCol}, debit=${debitCol}, credit=${creditCol}`);
-      break;
+    const dateStr = rowData[dateKey];
+    const description = rowData[descKey];
+    
+    let amount = 0;
+    let isDebit = false;
+
+    if (debitKey && creditKey) {
+      const debitVal = parseAmount(rowData[debitKey]);
+      const creditVal = parseAmount(rowData[creditKey]);
+      amount = debitVal || creditVal;
+      isDebit = debitVal > 0;
+    } else if (amountKey) {
+      amount = parseAmount(rowData[amountKey]);
+      isDebit = amount < 0;
     }
+
+    if (amount === 0) continue;
+
+    const transactionData = {
+      date: parseDate(dateStr),
+      description: sanitizeString(description?.toString().trim() || 'Unknown'),
+      amount: isDebit ? -Math.abs(amount) : Math.abs(amount),
+      is_debit: isDebit,
+    };
+
+    // Validate transaction data
+    const validationResult = TransactionSchema.safeParse(transactionData);
+    if (!validationResult.success) {
+      console.error('Transaction validation failed:', validationResult.error);
+      continue; // Skip invalid transactions
+    }
+
+    transactions.push(validationResult.data);
   }
 
-  if (dateCol === -1 || descCol === -1 || (amountCol === -1 && debitCol === -1)) {
-    throw new Error('Could not identify required columns (Date, Description, Amount) in the spreadsheet.');
-  }
+  return { transactions, currency: detectedCurrency };
+}
 
-  for (let i = 0; i < rawData.length; i++) {
-    const row = rawData[i];
-    if (!row || row.length === 0) continue;
-
-    const dateRaw = row[dateCol];
-    const desc = String(row[descCol] || '').trim();
-    let amount: number | null = null;
-    let isDebit = true;
-
-    if (amountCol !== -1) {
-      const amtStr = String(row[amountCol] || '').trim();
-      amount = parseAmount(amtStr);
-    } else if (debitCol !== -1 && creditCol !== -1) {
-      const debitStr = String(row[debitCol] || '').trim();
-      const creditStr = String(row[creditCol] || '').trim();
-      const debitAmt = parseAmount(debitStr);
-      const creditAmt = parseAmount(creditStr);
+async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency: string, statementPeriodStart?: string | null, statementPeriodEnd?: string | null }> {
+  try {
+    console.log('Starting PDF parsing with pdfjs-serverless...');
+    
+    const arrayBuffer = await fileData.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    
+    const loadingTask = getDocument(uint8Array);
+    const pdfDoc = await loadingTask.promise;
+    console.log(`PDF loaded: ${pdfDoc.numPages} pages`);
+    
+    // Limit PDF page count to prevent processing issues
+    if (pdfDoc.numPages > 30) {
+      throw new Error('PDF has too many pages (maximum 30). Please upload a smaller PDF or export as CSV/Excel format.');
+    }
+    
+    let fullText = '';
+    for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+      const page = await pdfDoc.getPage(pageNum);
+      const textContent = await page.getTextContent();
       
-      if (debitAmt !== null) {
-        amount = debitAmt;
-        isDebit = true;
-      } else if (creditAmt !== null) {
-        amount = creditAmt;
-        isDebit = false;
+      // Build text with better spacing preservation
+      let pageText = '';
+      let lastY = -1;
+      
+      for (const item of textContent.items) {
+        const currentItem = item as any;
+        if (!currentItem.str) continue;
+        
+        // Add newline if Y position changed significantly (new line in PDF)
+        if (lastY !== -1 && Math.abs(currentItem.transform[5] - lastY) > 2) {
+          pageText += '\n';
+        }
+        
+        pageText += currentItem.str + ' ';
+        lastY = currentItem.transform[5];
+      }
+      
+      fullText += pageText + '\n\n';
+      console.log(`Page ${pageNum}: extracted ${pageText.length} characters`);
+    }
+    
+    console.log(`Total extracted text length: ${fullText.length} characters`);
+    console.log(`Text sample (first 500 chars): ${fullText.substring(0, 500)}`);
+    
+    let currency = 'USD';
+    if (fullText.includes('₹') || fullText.includes('INR')) currency = 'INR';
+    else if (fullText.includes('$') || fullText.includes('USD')) currency = 'USD';
+    else if (fullText.includes('£') || fullText.includes('GBP')) currency = 'GBP';
+    else if (fullText.includes('€') || fullText.includes('EUR')) currency = 'EUR';
+    
+    console.log(`Detected currency: ${currency}`);
+    
+    // Extract statement period from header text (search only first 2000 chars to avoid matching transaction dates)
+    let statementPeriodStart = null;
+    let statementPeriodEnd = null;
+    
+    const headerText = fullText.substring(0, 2000);
+    console.log('Searching for statement period in header...');
+    
+    // Try multiple patterns to extract statement period
+    const periodPatterns = [
+      // Pattern 1: "Statement Period: MM/DD/YYYY - MM/DD/YYYY"
+      { regex: /(statement\s*period|billing\s*period|period)[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})\s*[-–to]+\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i, startGroup: 2, endGroup: 3 },
+      // Pattern 2: "From MM/DD/YYYY to MM/DD/YYYY"
+      { regex: /from\s+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})\s+(to|through)\s+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i, startGroup: 1, endGroup: 3 },
+      // Pattern 3: "Month DD, YYYY to Month DD, YYYY"
+      { regex: /(\w+\s+\d{1,2},\s+\d{4})\s*[-–to]+\s*(\w+\s+\d{1,2},\s+\d{4})/i, startGroup: 1, endGroup: 2 },
+      // Pattern 4: "for Month DD, YYYY to Month DD, YYYY"
+      { regex: /for\s+(\w+\s+\d{1,2},\s+\d{4})\s+to\s+(\w+\s+\d{1,2},\s+\d{4})/i, startGroup: 1, endGroup: 2 },
+      // Pattern 5: Just two dates separated by dash/to
+      { regex: /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})\s*[-–to]+\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i, startGroup: 1, endGroup: 2 }
+    ];
+    
+    for (const pattern of periodPatterns) {
+      const match = headerText.match(pattern.regex);
+      if (match) {
+        const startDateStr = match[pattern.startGroup];
+        const endDateStr = match[pattern.endGroup];
+        
+        const startDate = parseDate(startDateStr);
+        const endDate = parseDate(endDateStr);
+        
+        if (startDate && endDate) {
+          statementPeriodStart = startDate;
+          statementPeriodEnd = endDate;
+          console.log(`✓ Extracted period from header: ${statementPeriodStart} to ${statementPeriodEnd}`);
+          break;
+        }
       }
     }
-
-    if (!amount || amount === 0 || !desc) continue;
-
-    const parsedDate = parseDate(String(dateRaw || ''), null);
-    if (!parsedDate) continue;
-
-    const merchant = extractMerchant(desc);
-
-    try {
-      TransactionSchema.parse({
-        date: parsedDate,
-        description: desc,
-        amount,
-        is_debit: isDebit
-      });
-
-      transactions.push({
-        date: parsedDate,
-        description: desc,
-        amount,
-        is_debit: isDebit,
-        merchant
-      });
-    } catch (e) {
-      // Skip invalid
+    
+    if (!statementPeriodStart || !statementPeriodEnd) {
+      console.log('✗ Could not extract period from header, will calculate from transactions');
+      console.log(`Header sample: ${headerText.substring(0, 300)}`);
     }
-  }
-
-  return { transactions, currency };
-}
-
-async function parsePDF(fileArray: Uint8Array): Promise<{ transactions: any[], currency: string | null, period?: { start: string, end: string } }> {
-  const pdf = await getDocument({ data: fileArray }).promise;
-  const maxPages = Math.min(pdf.numPages, 50);
-  
-  console.log(`PDF has ${pdf.numPages} pages, processing first ${maxPages}`);
-
-  let fullText = '';
-  for (let i = 1; i <= maxPages; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    const pageText = content.items.map((item: any) => item.str).join(' ');
-    fullText += pageText + '\n';
-  }
-
-  console.log(`Extracted ${fullText.length} characters from PDF`);
-
-  const currency = detectCurrency(fullText);
-  
-  // Extract period from first ~2000 chars
-  const header = fullText.substring(0, 2000);
-  const period = extractStatementPeriod(header);
-  
-  if (period) {
-    console.log('✓ Header period extracted:', period);
-  } else {
-    console.log('⚠ No header period found, will use transaction min/max');
-  }
-
-  const transactions = parseTransactionsFromText(fullText, period?.end);
-
-  return { transactions, currency, period: period || undefined };
-}
-
-function extractStatementPeriod(header: string): { start: string, end: string } | null {
-  // Try various period patterns
-  const patterns = [
-    /statement\s+period[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s*(?:to|through|-)\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
-    /from\s+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(?:to|through)\s+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
-    /period[:\s]+(\w+\s+\d{1,2},?\s+\d{4})\s+(?:to|through|-)\s+(\w+\s+\d{1,2},?\s+\d{4})/i,
-    /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s*-\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/
-  ];
-
-  for (const pattern of patterns) {
-    const match = header.match(pattern);
-    if (match) {
-      const start = parseDate(match[1], null);
-      const end = parseDate(match[2], null);
-      if (start && end) {
-        return { start, end };
-      }
+    
+    const transactions = parseTransactionsFromText(fullText);
+    console.log(`Parsed ${transactions.length} transactions from PDF`);
+    
+    if (transactions.length < 3) {
+      throw new Error('Could not extract enough transactions from PDF. This file may be scanned or contain unextractable text. Please export your bank statement as CSV or Excel and re-upload.');
     }
+    
+    return { transactions, currency, statementPeriodStart, statementPeriodEnd };
+  } catch (error) {
+    console.error('PDF parsing error:', error);
+    // Provide user-friendly error messages
+    if (error instanceof Error && error.message.includes('too many pages')) {
+      throw error;
+    }
+    if (error instanceof Error && error.message.includes('Could not extract enough')) {
+      throw error;
+    }
+    throw new Error('Failed to parse PDF. This file may be scanned or contain unextractable text. Please export your bank statement as CSV or Excel and re-upload.');
   }
-
-  return null;
 }
 
-function parseTransactionsFromText(text: string, yearHint?: string): any[] {
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 5);
+function parseTransactionsFromText(text: string): any[] {
+  const transactions: any[] = [];
+  const rejectedLines: Array<{ line: string; reason: string }> = [];
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   
-  console.log(`Parsing ${lines.length} lines from text`);
-
+  console.log(`\n=== TRANSACTION PARSING DEBUG ===`);
+  console.log(`Processing ${lines.length} lines from text`);
+  
+  // Comprehensive skip patterns for headers, footers, and non-transaction lines
   const skipPatterns = [
-    /^(statement|account|page|date|description|amount|balance|transaction|debit|credit|opening|closing|total|subtotal|continued|brought forward|carried forward)/i,
-    /^\d+\s*$/,
-    /^[a-z\s]{30,}$/i,
-    /statement\s+period/i,
-    /^balance\s+as\s+of/i,
-    /^\s*$/
+    /statement\s*(period|date|from|through|ending|as\s*of)/i,
+    /account\s*(number|ending|balance|summary|type)/i,
+    /balance\s*(forward|as\s*of|beginning|ending|available|current)/i,
+    /total|subtotal|amount\s*due|minimum\s*payment|payment\s*due/i,
+    /page\s*\d+|^\d+\s*of\s*\d+/i,
+    /credit\s*limit|available\s*credit|apr|interest\s*rate/i,
+    /rewards|points|miles|cashback\s*earned/i,
+    /previous\s*balance|new\s*balance|closing\s*balance/i,
+    /fees\s*and\s*charges|finance\s*charge/i,
+    /customer\s*service|questions|contact\s*us/i,
+    /^(payments|purchases|credits|debits|fees)$/i,
+    /opening\s*balance|opening\s*bal/i,
+    /^\s*$|^[\s\-_=]+$/,
+    /date.*description.*amount/i,
+    /transaction\s*date|post\s*date|value\s*date/i
   ];
-
-  // Phase A: Strict - date must be at start
-  const strictTransactions = [];
-  const strictDatePatterns = [
-    /^(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/,
-    /^(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})/,
-    /^(\w{3}\s+\d{1,2},?\s+\d{4})/,
-    /^(\d{1,2}\s+\w{3}\s+\d{4})/
-  ];
-
-  let scanned = 0, skipped = 0, matched = 0, rejectedDate = 0;
-
-  for (const line of lines) {
-    scanned++;
+  
+  // Stricter date pattern - must be at start of line
+  const strictDatePattern = /^(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/;
+  
+  // Stricter amount pattern - requires decimal point, match last amount on line
+  const strictAmountPattern = /(?:[₹$£€]\s*)?((?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2})/g;
+  
+  let linesScanned = 0;
+  let linesSkipped = 0;
+  let linesWithDate = 0;
+  let linesWithAmount = 0;
+  let linesRejectedDate = 0;
+  
+  // Date range validation
+  const now = new Date();
+  const twoYearsAgo = new Date(now.getFullYear() - 2, now.getMonth(), now.getDate());
+  const oneMonthFuture = new Date(now.getFullYear(), now.getMonth() + 1, now.getDate());
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    linesScanned++;
     
-    if (skipPatterns.some(p => p.test(line))) {
-      skipped++;
-      continue;
-    }
-
-    let dateMatch: RegExpMatchArray | null = null;
-    let dateStr = '';
-    
-    for (const pattern of strictDatePatterns) {
-      dateMatch = line.match(pattern);
-      if (dateMatch) {
-        dateStr = dateMatch[1];
+    // Skip lines matching any skip pattern
+    let shouldSkip = false;
+    for (const pattern of skipPatterns) {
+      if (pattern.test(line)) {
+        linesSkipped++;
+        shouldSkip = true;
         break;
       }
     }
-
-    if (!dateStr) continue;
-
-    // Extract final amount
-    const amountMatch = line.match(/(\d{1,3}(?:,\d{3})*\.\d{2})(?:\s*(?:DR|CR|debit|credit)?)?$/i);
-    if (!amountMatch) continue;
-
-    const amountStr = amountMatch[1];
-    const amount = parseAmount(amountStr);
-    if (!amount || amount === 0) continue;
-
-    // Text between date and amount
-    const dateEndIdx = line.indexOf(dateStr) + dateStr.length;
-    const amountStartIdx = line.indexOf(amountStr);
-    if (amountStartIdx <= dateEndIdx) continue;
-
-    const desc = line.substring(dateEndIdx, amountStartIdx).trim();
-    if (desc.length < 3) continue;
-
-    const parsedDate = parseDate(dateStr, yearHint || null);
+    if (shouldSkip) continue;
+    
+    // Must start with a date
+    const dateMatch = line.match(strictDatePattern);
+    if (!dateMatch) {
+      continue;
+    }
+    
+    const dateStr = dateMatch[1];
+    linesWithDate++;
+    
+    // Validate the date makes sense
+    const parsedDate = parseDate(dateStr);
     if (!parsedDate) {
-      rejectedDate++;
+      rejectedLines.push({ line: line.substring(0, 80), reason: 'Date unparseable' });
       continue;
     }
-
-    const cleanDesc = cleanDescription(desc);
-    const merchant = extractMerchant(cleanDesc);
-    const isDebit = detectIsDebit(line, amount);
-
-    try {
-      TransactionSchema.parse({
-        date: parsedDate,
-        description: cleanDesc,
-        amount,
-        is_debit: isDebit
-      });
-
-      strictTransactions.push({
-        date: parsedDate,
-        description: cleanDesc,
-        amount,
-        is_debit: isDebit,
-        merchant
-      });
-      matched++;
-    } catch (e) {
-      // Invalid
+    
+    const txDate = new Date(parsedDate);
+    if (txDate < twoYearsAgo || txDate > oneMonthFuture) {
+      rejectedLines.push({ line: line.substring(0, 80), reason: `Date out of range: ${parsedDate}` });
+      linesRejectedDate++;
+      continue;
     }
-  }
-
-  console.log(`Phase A (strict): scanned=${scanned}, skipped=${skipped}, matched=${matched}, rejectedDate=${rejectedDate}`);
-
-  if (strictTransactions.length >= 5) {
-    console.log('Phase A succeeded with', strictTransactions.length, 'transactions');
-    console.log('Sample transactions:', strictTransactions.slice(0, 3).map(t => ({ date: t.date, desc: t.description.substring(0, 30), amount: t.amount })));
-    return strictTransactions;
-  }
-
-  // Phase B: Flexible - date anywhere, but controlled distance to amount
-  console.log('Phase A yielded too few, trying Phase B (flexible)...');
-  
-  const flexibleTransactions = [];
-  const flexDatePatterns = [
-    /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/g,
-    /(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})/g,
-    /(\w{3}\s+\d{1,2},?\s+\d{4})/g,
-    /(\d{1,2}\s+\w{3}\s+\d{4})/g
-  ];
-
-  for (const line of lines) {
-    if (skipPatterns.some(p => p.test(line))) continue;
-
-    const amountMatch = line.match(/(\d{1,3}(?:,\d{3})*\.\d{2})(?:\s*(?:DR|CR|debit|credit)?)?$/i);
-    if (!amountMatch) continue;
-
-    const amountStr = amountMatch[1];
-    const amount = parseAmount(amountStr);
-    if (!amount || amount === 0) continue;
-
-    const amountStartIdx = line.indexOf(amountStr);
-
-    // Find all dates
-    const dateMatches: Array<{ str: string, idx: number }> = [];
-    for (const pattern of flexDatePatterns) {
-      let match;
-      while ((match = pattern.exec(line)) !== null) {
-        dateMatches.push({ str: match[1], idx: match.index });
+    
+    // Find all amounts, use the LAST one (typically the final amount after debits/credits)
+    const amountMatches = Array.from(line.matchAll(strictAmountPattern));
+    if (amountMatches.length === 0) {
+      continue;
+    }
+    
+    linesWithAmount++;
+    
+    const lastAmountMatch = amountMatches[amountMatches.length - 1];
+    const lastAmountStr = lastAmountMatch[1];
+    const lastAmountIndex = lastAmountMatch.index!;
+    
+    const dateIndex = line.indexOf(dateStr);
+    
+    // Extract text between date and amount
+    let rawDescription = line.substring(dateIndex + dateStr.length, lastAmountIndex).trim();
+    
+    // Must have meaningful text between date and amount
+    if (rawDescription.length < 3) {
+      rejectedLines.push({ line: line.substring(0, 80), reason: 'Description too short' });
+      continue;
+    }
+    
+    // Clean up description
+    const typeKeywords = ['PURCHASE', 'DEBIT', 'WITHDRAWAL', 'ATM', 'TRANSFER', 'PAYMENT', 'DEPOSIT', 'CREDIT', 'ACH', 'CHECK', 'POS'];
+    let description = rawDescription;
+    
+    // Remove type keywords that appear at the end
+    for (const keyword of typeKeywords) {
+      const regex = new RegExp(`\\b${keyword}\\b\\s*$`, 'i');
+      description = description.replace(regex, '').trim();
+    }
+    
+    // Remove reference numbers (4+ digits at end)
+    description = description.replace(/\s+\d{4,}\s*$/, '').trim();
+    
+    // Remove redundant dates
+    description = description.replace(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/g, '').trim();
+    
+    // Remove extra whitespace
+    description = description.replace(/\s+/g, ' ').trim();
+    
+    // Fallback if description is now empty
+    if (description.length < 2) {
+      description = `Transaction ${dateStr}`;
+    }
+    
+    // Parse and validate amount
+    const amount = parseAmount(lastAmountStr);
+    if (amount <= 0) continue;
+    
+    // Determine if debit or credit
+    const lineLC = line.toLowerCase();
+    const hasDebitKeyword = lineLC.includes('dr') || lineLC.includes('debit') || 
+                            lineLC.includes('withdrawal') || lineLC.includes('payment') ||
+                            lineLC.includes('wd');
+    const hasCreditKeyword = lineLC.includes('cr') || lineLC.includes('credit') || 
+                             lineLC.includes('deposit') || lineLC.includes('cd');
+    
+    const isDebit = hasDebitKeyword || (!hasCreditKeyword && amount > 0);
+    
+    // Create transaction object
+    try {
+      const transactionData = {
+        date: parsedDate,
+        description: sanitizeString(description),
+        amount: isDebit ? -Math.abs(amount) : Math.abs(amount),
+        is_debit: isDebit,
+      };
+      
+      const validationResult = TransactionSchema.safeParse(transactionData);
+      if (validationResult.success) {
+        transactions.push(validationResult.data);
       }
-    }
-
-    if (dateMatches.length === 0) continue;
-
-    // Choose date nearest and left of amount
-    const validDates = dateMatches.filter(d => d.idx < amountStartIdx && (amountStartIdx - d.idx) <= 60);
-    if (validDates.length === 0) continue;
-
-    validDates.sort((a, b) => b.idx - a.idx); // nearest first
-    const chosenDate = validDates[0];
-
-    const parsedDate = parseDate(chosenDate.str, yearHint || null);
-    if (!parsedDate) continue;
-
-    const dateEndIdx = chosenDate.idx + chosenDate.str.length;
-    const desc = line.substring(dateEndIdx, amountStartIdx).trim();
-    if (desc.length < 3) continue;
-
-    const cleanDesc = cleanDescription(desc);
-    const merchant = extractMerchant(cleanDesc);
-    const isDebit = detectIsDebit(line, amount);
-
-    try {
-      TransactionSchema.parse({
-        date: parsedDate,
-        description: cleanDesc,
-        amount,
-        is_debit: isDebit
-      });
-
-      flexibleTransactions.push({
-        date: parsedDate,
-        description: cleanDesc,
-        amount,
-        is_debit: isDebit,
-        merchant
-      });
-    } catch (e) {
-      // Invalid
+    } catch (error) {
+      console.log('Error parsing transaction from line:', line.substring(0, 100));
     }
   }
-
-  console.log('Phase B yielded', flexibleTransactions.length, 'transactions');
-  console.log('Sample transactions:', flexibleTransactions.slice(0, 3).map(t => ({ date: t.date, desc: t.description.substring(0, 30), amount: t.amount })));
-
-  return flexibleTransactions.length > 0 ? flexibleTransactions : strictTransactions;
+  
+  // Debug output
+  console.log(`\n=== PARSING SUMMARY ===`);
+  console.log(`Total lines scanned: ${linesScanned}`);
+  console.log(`Lines skipped (headers/footers): ${linesSkipped}`);
+  console.log(`Lines with valid date at start: ${linesWithDate}`);
+  console.log(`Lines with valid amount at end: ${linesWithAmount}`);
+  console.log(`Lines rejected (date out of range): ${linesRejectedDate}`);
+  console.log(`Successfully parsed transactions: ${transactions.length}`);
+  
+  // Show sample of first 3 parsed transactions
+  if (transactions.length > 0) {
+    console.log('\nSample parsed transactions:');
+    transactions.slice(0, 3).forEach((tx, i) => {
+      console.log(`  ${i+1}. Date: ${tx.date}, Desc: "${tx.description.substring(0, 40)}", Amount: ${tx.amount}`);
+    });
+  }
+  
+  // Show sample of rejected lines with reasons
+  if (rejectedLines.length > 0) {
+    console.log('\nSample rejected lines:');
+    rejectedLines.slice(0, 5).forEach((r, i) => {
+      console.log(`  ${i+1}. ${r.reason}: "${r.line}..."`);
+    });
+  }
+  
+  if (transactions.length === 0 && linesWithDate > 0) {
+    console.log('\n⚠️ WARNING: Found dates but no valid transactions. Check date ranges and skip patterns.');
+  }
+  
+  return transactions;
 }
 
-function parseDate(dateStr: string, yearHint: string | null): string | null {
+function parseDate(dateStr: string): string | null {
   if (!dateStr) return null;
-
-  dateStr = dateStr.trim();
-
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const twoYearsAgo = new Date(currentYear - 2, 0, 1);
-  const oneMonthAhead = new Date(now.getFullYear(), now.getMonth() + 1, now.getDate());
-
-  const formats = [
-    // MM/DD/YYYY or MM-DD-YYYY
-    { pattern: /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/, order: 'mdy' },
-    // DD/MM/YYYY or DD-MM-YYYY
-    { pattern: /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/, order: 'dmy' },
-    // YYYY-MM-DD
-    { pattern: /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/, order: 'ymd' },
-    // MM/DD/YY or MM-DD-YY
-    { pattern: /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})$/, order: 'mdy2' },
-    // Month DD, YYYY (e.g., Nov 14, 2024)
-    { pattern: /^(\w{3,9})\s+(\d{1,2}),?\s+(\d{4})$/, order: 'mdy_text' },
-    // DD Month YYYY (e.g., 14 Nov 2024)
-    { pattern: /^(\d{1,2})\s+(\w{3,9})\s+(\d{4})$/, order: 'dmy_text' },
-    // Month DD (no year)
-    { pattern: /^(\w{3,9})\s+(\d{1,2})$/, order: 'md_text' },
-  ];
-
-  for (const fmt of formats) {
-    const match = dateStr.match(fmt.pattern);
-    if (!match) continue;
-
-    let year: number, month: number, day: number;
-
-    if (fmt.order === 'ymd') {
-      year = parseInt(match[1]);
-      month = parseInt(match[2]);
-      day = parseInt(match[3]);
-    } else if (fmt.order === 'mdy') {
-      month = parseInt(match[1]);
-      day = parseInt(match[2]);
-      year = parseInt(match[3]);
-    } else if (fmt.order === 'dmy') {
-      day = parseInt(match[1]);
-      month = parseInt(match[2]);
-      year = parseInt(match[3]);
-    } else if (fmt.order === 'mdy2') {
-      month = parseInt(match[1]);
-      day = parseInt(match[2]);
-      let yy = parseInt(match[3]);
-      year = yy < 50 ? 2000 + yy : 1900 + yy;
-    } else if (fmt.order === 'mdy_text') {
-      month = parseMonth(match[1]);
-      day = parseInt(match[2]);
-      year = parseInt(match[3]);
-    } else if (fmt.order === 'dmy_text') {
-      day = parseInt(match[1]);
-      month = parseMonth(match[2]);
-      year = parseInt(match[3]);
-    } else if (fmt.order === 'md_text') {
-      month = parseMonth(match[1]);
-      day = parseInt(match[2]);
-      // Use yearHint
-      if (yearHint) {
-        const hintDate = new Date(yearHint);
-        year = hintDate.getFullYear();
-      } else {
-        year = currentYear;
+  
+  try {
+    // Handle MM/DD/YY format explicitly (common in US bank statements)
+    const mmddyyMatch = dateStr.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2})$/);
+    if (mmddyyMatch) {
+      let [_, month, day, year] = mmddyyMatch;
+      // Convert 2-digit year to 4-digit (24 -> 2024, 25 -> 2025)
+      const fullYear = parseInt(year) >= 50 ? `19${year}` : `20${year}`;
+      const parsedDate = new Date(`${fullYear}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
+      if (!isNaN(parsedDate.getTime())) {
+        return parsedDate.toISOString().split('T')[0];
       }
-    } else {
-      continue;
     }
-
-    if (month < 1 || month > 12 || day < 1 || day > 31) continue;
-
-    const parsed = new Date(year, month - 1, day);
-    if (isNaN(parsed.getTime())) continue;
-
-    // Sanity checks
-    if (parsed < twoYearsAgo || parsed > oneMonthAhead) {
-      continue;
+    
+    // Handle MM/DD/YYYY format
+    const mmddyyyyMatch = dateStr.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+    if (mmddyyyyMatch) {
+      const [_, month, day, year] = mmddyyyyMatch;
+      const parsedDate = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
+      if (!isNaN(parsedDate.getTime())) {
+        return parsedDate.toISOString().split('T')[0];
+      }
     }
-
-    return parsed.toISOString().split('T')[0];
+    
+    // Handle "5 November 2024" or "5 Nov 2024" format
+    const textDateMatch = dateStr.match(/^(\d{1,2})\s+(\w+)\s+(\d{4})$/);
+    if (textDateMatch) {
+      const date = new Date(dateStr);
+      if (!isNaN(date.getTime())) {
+        return date.toISOString().split('T')[0];
+      }
+    }
+    
+    // Try DD/MM/YYYY format
+    const parts = dateStr.split(/[\/\-\.]/);
+    if (parts.length === 3) {
+      // Try as MM/DD/YYYY first
+      const [first, second, third] = parts;
+      let parsedDate = new Date(`${third}-${first.padStart(2, '0')}-${second.padStart(2, '0')}`);
+      if (!isNaN(parsedDate.getTime())) {
+        return parsedDate.toISOString().split('T')[0];
+      }
+      // Try as DD/MM/YYYY
+      parsedDate = new Date(`${third}-${second.padStart(2, '0')}-${first.padStart(2, '0')}`);
+      if (!isNaN(parsedDate.getTime())) {
+        return parsedDate.toISOString().split('T')[0];
+      }
+    }
+    
+    // Try standard JavaScript date parsing as last resort
+    const date = new Date(dateStr);
+    if (!isNaN(date.getTime())) {
+      return date.toISOString().split('T')[0];
+    }
+  } catch (e) {
+    console.error('Date parsing error for:', dateStr, e);
   }
-
+  
+  // Return null instead of today's date - caller should handle this
+  console.log(`Failed to parse date: ${dateStr}`);
   return null;
 }
 
-function parseMonth(monthStr: string): number {
-  const months: Record<string, number> = {
-    jan: 1, january: 1,
-    feb: 2, february: 2,
-    mar: 3, march: 3,
-    apr: 4, april: 4,
-    may: 5,
-    jun: 6, june: 6,
-    jul: 7, july: 7,
-    aug: 8, august: 8,
-    sep: 9, sept: 9, september: 9,
-    oct: 10, october: 10,
-    nov: 11, november: 11,
-    dec: 12, december: 12
-  };
-
-  return months[monthStr.toLowerCase()] || 0;
-}
-
-function parseAmount(amountStr: string): number | null {
-  if (!amountStr) return null;
+function parseAmount(value: any): number {
+  if (typeof value === 'number') return value;
+  if (!value) return 0;
   
-  let str = amountStr.replace(/[^0-9.\-(),]/g, '');
+  const str = value.toString();
+  // Remove currency symbols, commas, spaces
+  const cleaned = str.replace(/[£$€,\s]/g, '');
   
-  // Handle parentheses as negative
-  if (str.startsWith('(') && str.endsWith(')')) {
-    str = '-' + str.substring(1, str.length - 1);
-  }
-
-  const num = parseFloat(str);
-  return isNaN(num) ? null : num;
-}
-
-function detectIsDebit(line: string, amount: number): boolean {
-  const lower = line.toLowerCase();
-  
-  if (/\bdr\b|\bdebit\b|\bwithdrawal\b|\bpayment\b|\bwd\b/.test(lower)) {
-    return true;
-  }
-  if (/\bcr\b|\bcredit\b|\bdeposit\b|\brefund\b/.test(lower) && amount >= 0) {
-    return false;
+  // Handle parentheses as negative (common in accounting)
+  if (cleaned.includes('(') && cleaned.includes(')')) {
+    const num = parseFloat(cleaned.replace(/[()]/g, ''));
+    return -Math.abs(num);
   }
   
-  return amount >= 0; // default
+  const num = parseFloat(cleaned);
+  return isNaN(num) ? 0 : num;
 }
 
-function cleanDescription(desc: string): string {
-  let cleaned = desc.trim();
-  
-  // Remove trailing reference numbers
-  cleaned = cleaned.replace(/\s+\d{4,}$/, '');
-  
-  // Remove redundant date tokens
-  cleaned = cleaned.replace(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/g, '');
-  
-  // Remove generic keywords at end
-  cleaned = cleaned.replace(/\s+(PURCHASE|DEBIT|ATM|TRANSFER|POS|ACH|CHECK|CREDIT|CARD|TRANSACTION)\s*$/gi, '');
-  
-  cleaned = cleaned.replace(/\s+/g, ' ').trim();
-  
-  if (!cleaned) {
-    cleaned = 'Transaction';
-  }
-  
-  return cleaned.substring(0, 500);
-}
-
-function extractMerchant(description: string): string | null {
-  const words = description.split(/\s+/).filter(w => w.length > 0);
-  const merchant = words.slice(0, 3).join(' ');
-  return merchant.length > 0 ? merchant : null;
-}
-
-function detectCurrency(text: string): string | null {
-  const upper = text.toUpperCase();
-  if (upper.includes('USD') || upper.includes('$')) return 'USD';
-  if (upper.includes('EUR') || upper.includes('€')) return 'EUR';
-  if (upper.includes('GBP') || upper.includes('£')) return 'GBP';
-  if (upper.includes('INR') || upper.includes('₹') || upper.includes('RUPEE')) return 'INR';
-  return null;
-}
-
-function categorizeTransaction(description: string, userRules: any[]): string {
+function categorizeTransaction(description: string, rules: any[]): string {
   const desc = description.toLowerCase();
   
-  for (const rule of userRules) {
-    if (desc.includes(rule.keyword.toLowerCase())) {
+  // First, check custom user rules
+  for (const rule of rules) {
+    const keyword = rule.keyword.toLowerCase();
+    if (desc.includes(keyword)) {
       return rule.category;
     }
   }
   
-  const categories: Record<string, string[]> = {
-    Travel: ['flight', 'hotel', 'uber', 'lyft', 'taxi', 'airline', 'booking', 'airbnb', 'train', 'bus', 'rental car'],
-    Education: ['tuition', 'school', 'university', 'college', 'course', 'udemy', 'coursera', 'books', 'library'],
-    Entertainment: ['netflix', 'spotify', 'hulu', 'disney', 'movie', 'cinema', 'theater', 'concert', 'game', 'steam'],
-    Food: ['restaurant', 'food', 'cafe', 'coffee', 'starbucks', 'mcdonald', 'pizza', 'grocery', 'supermarket', 'dining'],
-    ATM: ['atm', 'cash withdrawal', 'withdrawal']
-  };
+  // Travel - expanded with rideshares, car rentals, hotels, airlines
+  if (desc.match(/uber|uber\s*eats|lyft|taxi|cab|train|flight|airline|airplane|bus|parking|metro|transit|toll|gas\s*station|shell|bp|exxon|chevron|mobil|texaco|valero|fuel|gasoline|hertz|enterprise|avis|budget|rental|car\s*rent|airbnb|booking\.com|expedia|hotels?\.com|marriott|hilton|ihg|hyatt|best\s*western|delta|united|american\s*airlines|southwest|jetblue|spirit|frontier|alaska\s*air|indigo|airasia/)) 
+    return 'Travel';
   
-  for (const [category, keywords] of Object.entries(categories)) {
-    if (keywords.some(kw => desc.includes(kw))) {
-      return category;
-    }
-  }
+  // Education - textbooks, online courses, school supplies
+  if (desc.match(/school|university|college|course|tuition|book|education|learning|coursera|udemy|udacity|pluralsight|skillshare|khan\s*academy|textbook|student|academy|library/)) 
+    return 'Education';
+  
+  // Entertainment - streaming, gaming, movies, music
+  if (desc.match(/netflix|spotify|hulu|disney|disney\+|prime\s*video|amazon\s*prime|apple\s*tv|youtube|youtube\s*premium|paramount|hbo|max|peacock|cinema|movie|theater|theatre|amc|regal|imax|concert|show|event|game|gaming|steam|playstation|xbox|nintendo|twitch|entertainment|ticket|ticketmaster|fandango|stubhub|apple\.com\/bill|itunes|google\s*play/)) 
+    return 'Entertainment';
+  
+  // Food - restaurants, delivery, groceries, fast food
+  if (desc.match(/restaurant|cafe|coffee|starbucks|dunkin|dunkin'|peet|caribou|food|grocery|groceries|supermarket|market|walmart|target|whole\s*foods|trader\s*joe|safeway|kroger|publix|albertsons|costco|sam'?s\s*club|aldi|lidl|pizza|burger|mcdonald|subway|chipotle|panera|domino|papa\s*john|taco\s*bell|wendy|kfc|chick-fil-a|popeyes|five\s*guys|shake\s*shack|in-n-out|whataburger|sonic|arby|jack\s*in\s*the|carl|hardee|dairy\s*queen|uber\s*eats|doordash|grubhub|postmates|seamless|deliveroo|zomato|swiggy|instacart|just\s*eat/)) 
+    return 'Food';
+  
+  // ATM - cash withdrawals
+  if (desc.match(/atm|cash|withdrawal|cashback|cash\s*advance/)) 
+    return 'ATM';
   
   return 'Miscellaneous';
 }
 
-function deduplicateTransactions(transactions: any[]): any[] {
-  const seen = new Set<string>();
-  const unique: any[] = [];
+function extractMerchant(description: string): string | null {
+  if (!description) return null;
   
-  for (const tx of transactions) {
-    const normalized = tx.description.toLowerCase().replace(/\s+/g, ' ').trim();
-    const key = `${tx.transaction_date}|${normalized}|${Math.abs(tx.amount)}`;
-    
-    if (!seen.has(key)) {
-      seen.add(key);
-      unique.push(tx);
-    }
-  }
-  
-  return unique;
+  // Extract first few words as potential merchant name
+  const words = description.trim().split(/\s+/);
+  return sanitizeString(words.slice(0, 3).join(' '));
+}
+
+function sanitizeString(input: string): string {
+  // Remove potentially dangerous characters and limit length
+  return input
+    .replace(/[<>\"'&]/g, '') // Remove HTML/XSS characters
+    .slice(0, 500); // Enforce max length
 }
