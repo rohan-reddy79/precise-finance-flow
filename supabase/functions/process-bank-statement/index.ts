@@ -586,7 +586,8 @@ function parseTransactionsFromText(text: string): any[] {
   const strictDatePattern = /^(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/;
   
   // Stricter amount pattern - requires decimal point, match last amount on line
-  const strictAmountPattern = /(?:[₹$£€]\s*)?((?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2})/g;
+  // Capture optional parentheses or minus signs to preserve sign indicators
+  const strictAmountPattern = /(?:\()?(?:[₹$£€]\s*)?(-?(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2})(?:\))?/g;
   
   let linesScanned = 0;
   let linesSkipped = 0;
@@ -684,32 +685,76 @@ function parseTransactionsFromText(text: string): any[] {
       description = `Transaction ${dateStr}`;
     }
     
-    // Parse and validate amount
-    const amount = parseAmount(lastAmountStr);
-    if (amount <= 0) continue;
+    // Parse amount with sign
+    const signedAmount = parseAmount(lastAmountStr);
+    const absAmount = Math.abs(signedAmount);
+    if (absAmount === 0) continue;
     
-    // Determine if debit or credit
-    const lineLC = line.toLowerCase();
-    const hasDebitKeyword = lineLC.includes('dr') || lineLC.includes('debit') || 
-                            lineLC.includes('withdrawal') || lineLC.includes('payment') ||
-                            lineLC.includes('wd');
-    const hasCreditKeyword = lineLC.includes('cr') || lineLC.includes('credit') || 
-                             lineLC.includes('deposit') || lineLC.includes('cd');
+    // Phrase-aware debit/credit detection
+    const lower = line.toLowerCase();
     
-    const isDebit = hasDebitKeyword || (!hasCreditKeyword && amount > 0);
+    // Helper patterns for context-aware detection
+    const zelle = /zelle/i.test(lower);
+    const hasFrom = /\bfrom\b/i.test(lower);
+    const hasTo = /\bto\b/i.test(lower);
+    const received = /\breceiv(?:ed|e|ing)\b/i.test(lower);
+    const sent = /\bsent\b/i.test(lower);
+    const paid = /\bpaid\b/i.test(lower);
+    
+    // Credit signals (incoming funds)
+    const creditSignals = 
+      /\bdeposit\b|\brefund\b|\breversal\b|\breimb(?:ursement)?\b|\bcash\s*back\b|\binterest\b|\bdividend\b|\bpayroll\b|\bsalary\b|\bdirect\s*deposit\b|\bach\s*credit\b|\bincoming\s*wire\b/i.test(lower) ||
+      (zelle && (hasFrom || received)) ||
+      /\bpayment\s+from\b/i.test(lower) ||
+      /\btransfer\s+from\b/i.test(lower) ||
+      /\bcr\b|\(cr\)/i.test(lower); // Word boundary CR markers
+    
+    // Debit signals (outgoing funds)
+    const debitSignals = 
+      /\bwithdrawal\b|\batm\b|\bdebit\b|\bpurchase\b|\bpos\b|\bfee\b|\bcharge\b|\bbill\s*pay(?:ment)?\b/i.test(lower) ||
+      /\bpayment\s+to\b/i.test(lower) ||
+      /\btransfer\s+to\b/i.test(lower) ||
+      (zelle && (hasTo || sent || paid)) ||
+      /\bdr\b|\(dr\)/i.test(lower); // Word boundary DR markers
+    
+    // Determine direction with fallback to signed amount
+    let isDebit: boolean;
+    let reason = '';
+    
+    if (creditSignals && !debitSignals) {
+      isDebit = false;
+      reason = 'credit-signal';
+    } else if (debitSignals && !creditSignals) {
+      isDebit = true;
+      reason = 'debit-signal';
+    } else if (signedAmount < 0) {
+      isDebit = true;
+      reason = 'fallback-negative';
+    } else if (signedAmount > 0) {
+      isDebit = false;
+      reason = 'fallback-positive';
+    } else {
+      isDebit = true;
+      reason = 'default-debit';
+    }
     
     // Create transaction object
     try {
       const transactionData = {
         date: parsedDate,
         description: sanitizeString(description),
-        amount: isDebit ? -Math.abs(amount) : Math.abs(amount),
+        amount: isDebit ? -absAmount : absAmount,
         is_debit: isDebit,
       };
       
       const validationResult = TransactionSchema.safeParse(transactionData);
       if (validationResult.success) {
         transactions.push(validationResult.data);
+        
+        // Log first 5 transactions for diagnostics
+        if (transactions.length <= 5) {
+          console.log(`  [${isDebit ? 'DEBIT' : 'CREDIT'}] ${reason}: $${absAmount.toFixed(2)} - "${description.substring(0, 50)}"`);
+        }
       }
     } catch (error) {
       console.log('Error parsing transaction from line:', line.substring(0, 100));
