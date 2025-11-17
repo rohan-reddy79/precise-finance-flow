@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -24,6 +24,15 @@ const TransactionsTab = ({ projectId }: TransactionsTabProps) => {
 
   useEffect(() => {
     loadTransactions();
+  }, [projectId]);
+
+  const autoRanRef = useRef(false);
+  useEffect(() => {
+    if (!autoRanRef.current) {
+      autoRanRef.current = true;
+      // Auto-run safe reprocess for recent statements
+      reprocessStatements();
+    }
   }, [projectId]);
 
   const loadTransactions = async () => {
@@ -62,23 +71,26 @@ const TransactionsTab = ({ projectId }: TransactionsTabProps) => {
   const reprocessStatements = async () => {
     setReprocessing(true);
     toast({
-      title: "Reprocessing statements",
-      description: "This may take a few moments...",
+      title: "Reprocessing recent statements",
+      description: "Re-parsing with improved logic...",
     });
 
     try {
-      // Fetch all statements for this project
+      const cutoff = new Date();
+      cutoff.setMonth(cutoff.getMonth() - 12);
+
       const { data: statements, error: fetchError } = await supabase
         .from('bank_statements')
-        .select('id, file_name, processing_status')
-        .eq('project_id', projectId);
+        .select('id, file_name, processing_status, upload_date')
+        .eq('project_id', projectId)
+        .gte('upload_date', cutoff.toISOString());
 
       if (fetchError) throw fetchError;
 
       if (!statements || statements.length === 0) {
         toast({
-          title: "No statements found",
-          description: "There are no statements to reprocess.",
+          title: "No recent statements found",
+          description: "Nothing to reprocess in the last 12 months.",
           variant: "destructive",
         });
         return;
@@ -87,8 +99,13 @@ const TransactionsTab = ({ projectId }: TransactionsTabProps) => {
       let successCount = 0;
       let failCount = 0;
 
-      // Process each statement
-      for (const statement of statements) {
+      for (let i = 0; i < statements.length; i++) {
+        const statement = statements[i];
+        toast({
+          title: `Processing ${i + 1}/${statements.length}`,
+          description: statement.file_name,
+        });
+
         try {
           const { error } = await supabase.functions.invoke('process-bank-statement', {
             body: { statementId: statement.id, reprocess: true }
@@ -96,28 +113,37 @@ const TransactionsTab = ({ projectId }: TransactionsTabProps) => {
 
           if (error) {
             console.error(`Failed to reprocess ${statement.file_name}:`, error);
+            toast({
+              title: "Failed",
+              description: `${statement.file_name}: ${error.message}`,
+              variant: "destructive",
+            });
             failCount++;
           } else {
             successCount++;
           }
-        } catch (err) {
+        } catch (err: any) {
           console.error(`Error reprocessing ${statement.file_name}:`, err);
+          toast({
+            title: "Error",
+            description: `${statement.file_name}: ${err.message || 'Unknown error'}`,
+            variant: "destructive",
+          });
           failCount++;
         }
       }
 
-      // Reload transactions
       await loadTransactions();
 
       toast({
         title: "Reprocessing complete",
-        description: `Successfully reprocessed ${successCount} statement(s). ${failCount > 0 ? `${failCount} failed.` : ''}`,
+        description: `✓ ${successCount} succeeded, ${failCount > 0 ? `✗ ${failCount} failed` : 'all successful'}`,
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error reprocessing statements:', error);
       toast({
         title: "Reprocessing failed",
-        description: "An error occurred while reprocessing statements.",
+        description: error.message || "An error occurred while reprocessing.",
         variant: "destructive",
       });
     } finally {
