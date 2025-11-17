@@ -448,18 +448,31 @@ async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency
       // Build text with better spacing preservation
       let pageText = '';
       let lastY = -1;
+      let lastX = -1;
+      const leftMargin = 50; // Typical left margin in PDF coordinates
       
       for (const item of textContent.items) {
         const currentItem = item as any;
         if (!currentItem.str) continue;
         
-        // Add newline if Y position changed significantly (new line in PDF)
-        if (lastY !== -1 && Math.abs(currentItem.transform[5] - lastY) > 2) {
-          pageText += '\n';
+        const currentY = currentItem.transform[5];
+        const currentX = currentItem.transform[4];
+        
+        // Add newline if:
+        // 1. Y position changed significantly (vertical movement indicating new line)
+        // 2. OR X position reset to left margin (wrapped to new line)
+        if (lastY !== -1) {
+          const yDiff = Math.abs(currentY - lastY);
+          const xReset = lastX > 100 && currentX < leftMargin;
+          
+          if (yDiff > 5 || xReset) {
+            pageText += '\n';
+          }
         }
         
         pageText += currentItem.str + ' ';
-        lastY = currentItem.transform[5];
+        lastY = currentY;
+        lastX = currentX;
       }
       
       fullText += pageText + '\n\n';
