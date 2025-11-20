@@ -19,6 +19,8 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
     netFlow: 0,
     startDate: '',
     endDate: '',
+    openingBalance: null as number | null,
+    closingBalance: null as number | null,
   });
 
   useEffect(() => {
@@ -62,6 +64,20 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
 
       const dates = transactions.map(t => new Date(t.transaction_date)).sort((a, b) => a.getTime() - b.getTime());
 
+      // Extract balances from statements
+      // Sort statements by period to get earliest opening and latest closing
+      const sortedStatements = statements.sort((a, b) => {
+        const dateA = new Date(a.statement_period_start || 0);
+        const dateB = new Date(b.statement_period_start || 0);
+        return dateA.getTime() - dateB.getTime();
+      });
+      
+      const earliestStatement = sortedStatements[0];
+      const latestStatement = sortedStatements[sortedStatements.length - 1];
+      
+      const openingBalance = earliestStatement?.opening_balance || null;
+      const closingBalance = latestStatement?.closing_balance || null;
+
       setSummary({
         totalTransactions: transactions.length,
         totalCredit,
@@ -69,6 +85,8 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
         netFlow: totalCredit - totalDebit,
         startDate: dates[0]?.toLocaleDateString() || '',
         endDate: dates[dates.length - 1]?.toLocaleDateString() || '',
+        openingBalance,
+        closingBalance,
       });
 
       setLoading(false);
@@ -90,6 +108,38 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
     <div className="space-y-6">
       <h2 className="text-2xl font-bold">Financial Summary</h2>
       
+      {/* Balance Cards - First Row */}
+      {(summary.openingBalance !== null || summary.closingBalance !== null) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {summary.openingBalance !== null && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-muted-foreground">Opening Balance</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-bold text-blue-600">
+                  {currencySymbol}{summary.openingBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </p>
+              </CardContent>
+            </Card>
+          )}
+          
+          {summary.closingBalance !== null && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-muted-foreground">Closing Balance</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-bold text-blue-600">
+                  {currencySymbol}{summary.closingBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </p>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+      
+      {/* Transaction Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <Card>
           <CardHeader className="pb-2">
