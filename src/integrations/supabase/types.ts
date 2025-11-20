@@ -16,12 +16,14 @@ export type Database = {
     Tables: {
       bank_statements: {
         Row: {
+          closing_balance: number | null
           created_at: string
           currency: string | null
           file_name: string
           file_path: string
           file_type: string
           id: string
+          opening_balance: number | null
           parsing_errors: string | null
           processed_at: string | null
           processing_status: string | null
@@ -35,12 +37,14 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          closing_balance?: number | null
           created_at?: string
           currency?: string | null
           file_name: string
           file_path: string
           file_type: string
           id?: string
+          opening_balance?: number | null
           parsing_errors?: string | null
           processed_at?: string | null
           processing_status?: string | null
@@ -54,12 +58,14 @@ export type Database = {
           user_id: string
         }
         Update: {
+          closing_balance?: number | null
           created_at?: string
           currency?: string | null
           file_name?: string
           file_path?: string
           file_type?: string
           id?: string
+          opening_balance?: number | null
           parsing_errors?: string | null
           processed_at?: string | null
           processing_status?: string | null
