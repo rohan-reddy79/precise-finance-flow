@@ -42,13 +42,12 @@ const TransactionsTab = ({ projectId }: TransactionsTabProps) => {
 
       const statementIds = statements.map(s => s.id);
 
-      // Fetch transactions
+      // Fetch all transactions (no limit to show complete history)
       const { data, error } = await supabase
         .from('transactions')
         .select('*')
         .in('statement_id', statementIds)
-        .order('transaction_date', { ascending: false })
-        .limit(100);
+        .order('transaction_date', { ascending: false });
 
       if (error) throw error;
       setTransactions(data || []);

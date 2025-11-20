@@ -165,6 +165,8 @@ Deno.serve(async (req) => {
     let currency = 'USD';
     let statementPeriodStart: string | null = null;
     let statementPeriodEnd: string | null = null;
+    let openingBalance: number | null = null;
+    let closingBalance: number | null = null;
     const fileType = statement.file_type.toLowerCase();
 
     if (fileType === 'csv' || fileType.includes('spreadsheet') || fileType.includes('excel')) {
@@ -177,6 +179,8 @@ Deno.serve(async (req) => {
       currency = parseResult.currency;
       statementPeriodStart = parseResult.statementPeriodStart || null;
       statementPeriodEnd = parseResult.statementPeriodEnd || null;
+      openingBalance = parseResult.openingBalance || null;
+      closingBalance = parseResult.closingBalance || null;
     } else {
       console.error('Unsupported file type:', fileType);
       throw new Error('UNSUPPORTED_FILE_TYPE');
@@ -249,6 +253,8 @@ Deno.serve(async (req) => {
         statement_period_end: periodEnd,
         processed_at: new Date().toISOString(),
         currency: currency,
+        opening_balance: openingBalance,
+        closing_balance: closingBalance,
       })
       .eq('id', statementId);
 
@@ -424,7 +430,7 @@ async function parseSpreadsheet(fileData: Blob): Promise<{ transactions: any[], 
   return { transactions, currency: detectedCurrency };
 }
 
-async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency: string, statementPeriodStart?: string | null, statementPeriodEnd?: string | null }> {
+async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency: string, statementPeriodStart?: string | null, statementPeriodEnd?: string | null, openingBalance?: number | null, closingBalance?: number | null }> {
   try {
     console.log('Starting PDF parsing with pdfjs-serverless...');
     
@@ -541,7 +547,66 @@ async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency
       throw new Error('Could not extract enough transactions from PDF. This file may be scanned or contain unextractable text. Please export your bank statement as CSV or Excel and re-upload.');
     }
     
-    return { transactions, currency, statementPeriodStart, statementPeriodEnd };
+    // Extract opening and closing balances
+    let openingBalance: number | null = null;
+    let closingBalance: number | null = null;
+    
+    console.log('Searching for opening and closing balances...');
+    
+    // Patterns for opening balance (search in first 3000 chars)
+    const headerSection = fullText.substring(0, 3000);
+    const openingPatterns = [
+      /(?:opening|previous|beginning|starting)\s*balance[:\s]*\$?\s*([\d,]+\.\d{2})/i,
+      /balance\s*forward[:\s]*\$?\s*([\d,]+\.\d{2})/i,
+      /previous\s*statement\s*balance[:\s]*\$?\s*([\d,]+\.\d{2})/i,
+    ];
+    
+    for (const pattern of openingPatterns) {
+      const match = headerSection.match(pattern);
+      if (match) {
+        const balanceStr = match[1].replace(/,/g, '');
+        openingBalance = parseFloat(balanceStr);
+        console.log(`✓ Extracted opening balance: ${openingBalance}`);
+        break;
+      }
+    }
+    
+    // Patterns for closing balance (search in last 3000 chars)
+    const footerSection = fullText.substring(Math.max(0, fullText.length - 3000));
+    const closingPatterns = [
+      /(?:closing|ending|current|new)\s*balance[:\s]*\$?\s*([\d,]+\.\d{2})/i,
+      /balance\s*(?:as\s*of|on)[:\s]*[\d\/\-]+[:\s]*\$?\s*([\d,]+\.\d{2})/i,
+      /total\s*balance[:\s]*\$?\s*([\d,]+\.\d{2})/i,
+    ];
+    
+    for (const pattern of closingPatterns) {
+      const match = footerSection.match(pattern);
+      if (match) {
+        const balanceStr = match[1].replace(/,/g, '');
+        closingBalance = parseFloat(balanceStr);
+        console.log(`✓ Extracted closing balance: ${closingBalance}`);
+        break;
+      }
+    }
+    
+    // Validate balance reconciliation if both balances found
+    if (openingBalance !== null && closingBalance !== null && transactions.length > 0) {
+      const totalCredits = transactions.filter(t => !t.is_debit).reduce((sum, t) => sum + t.amount, 0);
+      const totalDebits = transactions.filter(t => t.is_debit).reduce((sum, t) => sum + t.amount, 0);
+      const netChange = totalCredits - totalDebits;
+      const expectedClosing = openingBalance + netChange;
+      const difference = Math.abs(expectedClosing - closingBalance);
+      
+      console.log(`Balance validation: Opening ${openingBalance} + Net ${netChange.toFixed(2)} = Expected ${expectedClosing.toFixed(2)}, Actual ${closingBalance}`);
+      
+      if (difference > 0.50) {
+        console.warn(`⚠️ Balance mismatch detected: difference of $${difference.toFixed(2)}. This may indicate missing transactions or parsing errors.`);
+      } else {
+        console.log(`✓ Balance reconciliation successful (difference: $${difference.toFixed(2)})`);
+      }
+    }
+    
+    return { transactions, currency, statementPeriodStart, statementPeriodEnd, openingBalance, closingBalance };
   } catch (error) {
     console.error('PDF parsing error:', error);
     // Provide user-friendly error messages
