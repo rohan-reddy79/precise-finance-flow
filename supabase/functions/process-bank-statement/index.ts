@@ -693,29 +693,25 @@ function parseTransactionsFromText(text: string): any[] {
     // Phrase-aware debit/credit detection
     const lower = line.toLowerCase();
     
-    // Helper patterns for context-aware detection
-    const zelle = /zelle/i.test(lower);
-    const hasFrom = /\bfrom\b/i.test(lower);
-    const hasTo = /\bto\b/i.test(lower);
-    const received = /\breceiv(?:ed|e|ing)\b/i.test(lower);
-    const sent = /\bsent\b/i.test(lower);
-    const paid = /\bpaid\b/i.test(lower);
-    
-    // Credit signals (incoming funds)
+    // Credit signals (incoming funds) - comprehensive patterns
     const creditSignals = 
+      // Direct "from" patterns (money coming IN)
+      /\b(?:zelle|payment|deposit|credit(?:ed)?|transfer|amount|ach)\s+(?:received\s+)?from\b/i.test(lower) ||
+      // Money received patterns
+      /\b(?:received|incoming|credited)\b/i.test(lower) ||
+      // Standard credit keywords
       /\bdeposit\b|\brefund\b|\breversal\b|\breimb(?:ursement)?\b|\bcash\s*back\b|\binterest\b|\bdividend\b|\bpayroll\b|\bsalary\b|\bdirect\s*deposit\b|\bach\s*credit\b|\bincoming\s*wire\b/i.test(lower) ||
-      (zelle && (hasFrom || received)) ||
-      /\bpayment\s+from\b/i.test(lower) ||
-      /\btransfer\s+from\b/i.test(lower) ||
-      /\bcr\b|\(cr\)/i.test(lower); // Word boundary CR markers
+      // Explicit CR markers
+      /\bcr\b|\(cr\)/i.test(lower);
     
-    // Debit signals (outgoing funds)
+    // Debit signals (outgoing funds) - comprehensive patterns
     const debitSignals = 
+      // Direct "to" patterns (money going OUT)
+      /\b(?:zelle|payment|transfer|amount|send?|sent|paid|processed)\s+(?:processed\s+)?to\b/i.test(lower) ||
+      // Standard debit keywords
       /\bwithdrawal\b|\batm\b|\bdebit\b|\bpurchase\b|\bpos\b|\bfee\b|\bcharge\b|\bbill\s*pay(?:ment)?\b/i.test(lower) ||
-      /\bpayment\s+to\b/i.test(lower) ||
-      /\btransfer\s+to\b/i.test(lower) ||
-      (zelle && (hasTo || sent || paid)) ||
-      /\bdr\b|\(dr\)/i.test(lower); // Word boundary DR markers
+      // Explicit DR markers
+      /\bdr\b|\(dr\)/i.test(lower);
     
     // Determine direction with fallback to signed amount
     let isDebit: boolean;
