@@ -362,6 +362,16 @@ export type Database = {
         | "Food"
         | "Miscellaneous"
         | "ATM"
+        | "Loan"
+        | "Salary"
+        | "Investment"
+        | "Insurance"
+        | "Utilities"
+        | "Healthcare"
+        | "Shopping"
+        | "Transfer"
+        | "Fee"
+        | "Tax"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -496,6 +506,16 @@ export const Constants = {
         "Food",
         "Miscellaneous",
         "ATM",
+        "Loan",
+        "Salary",
+        "Investment",
+        "Insurance",
+        "Utilities",
+        "Healthcare",
+        "Shopping",
+        "Transfer",
+        "Fee",
+        "Tax",
       ],
     },
   },

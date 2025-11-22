@@ -30,6 +30,7 @@ const AnalysisNav = ({ activeTab, projectId }: AnalysisNavProps) => {
     { id: "salaries", label: "Salaries Paid" },
     { id: "upianalysis", label: "UPI Txns Analysis" },
     { id: "odutilization", label: "OC or DD Utilization" },
+    { id: "frauddetection", label: "Fraud Detection" },
   ];
 
   const handleTabClick = (tabId: string) => {
