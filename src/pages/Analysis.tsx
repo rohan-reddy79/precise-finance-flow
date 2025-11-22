@@ -23,6 +23,7 @@ import DuplicatesTab from "@/components/analysis/DuplicatesTab";
 import SalariesTab from "@/components/analysis/SalariesTab";
 import UPIAnalysisTab from "@/components/analysis/UPIAnalysisTab";
 import ODUtilizationTab from "@/components/analysis/ODUtilizationTab";
+import FraudDetectionTab from "@/components/analysis/FraudDetectionTab";
 
 interface Project {
   id: string;
@@ -250,6 +251,7 @@ const Analysis = () => {
         {activeTab === "salaries" && <SalariesTab projectId={projectId!} />}
         {activeTab === "upianalysis" && <UPIAnalysisTab projectId={projectId!} />}
         {activeTab === "odutilization" && <ODUtilizationTab projectId={projectId!} />}
+        {activeTab === "frauddetection" && <FraudDetectionTab projectId={projectId!} />}
       </div>
     </div>
   );
