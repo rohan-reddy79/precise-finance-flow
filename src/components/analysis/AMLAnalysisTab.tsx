@@ -1,74 +1,216 @@
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { useProjectCurrency } from "@/hooks/useProjectCurrency";
+import { supabase } from "@/integrations/supabase/client";
 
 interface AMLAnalysisTabProps {
   projectId: string;
 }
 
 const AMLAnalysisTab = ({ projectId }: AMLAnalysisTabProps) => {
-  const riskScore = 35; // Lower is better
   const { currencySymbol } = useProjectCurrency(projectId);
-  
-  const metrics = [
-    { label: "Daily Avg Balance", value: "₹52,450" },
-    { label: "Max Balance", value: "₹98,750" },
-    { label: "Min Balance", value: "₹12,300" },
-    { label: "Days Gap (Max-Min)", value: "15 days" },
-    { label: "Debit Transactions", value: "145" },
-    { label: "Credit Transactions", value: "98" },
-    { label: "Longest Inactive Period", value: "7 days" },
-  ];
+  const [loading, setLoading] = useState(true);
+  const [metrics, setMetrics] = useState<any>({});
+  const [monthlyData, setMonthlyData] = useState<any[]>([]);
+  const [suspiciousActivities, setSuspiciousActivities] = useState<any[]>([]);
+  const [riskScore, setRiskScore] = useState(0);
 
-  const suspiciousActivities = [
-    { activity: "International wire transfers", count: 0 },
-    { activity: "Big deposit followed by withdrawals", count: 2 },
-    { activity: "Multiple deposits followed by big withdrawal", count: 1 },
-    { activity: "Cash Deposits More Than Maximum Salary", count: 0 },
-    { activity: "ATM Deposit Above 2L", count: 0 },
-    { activity: "Cheque transactions on bank holiday", count: 1 },
-  ];
+  useEffect(() => {
+    loadAMLData();
+  }, [projectId]);
 
-  const monthlyData = [
-    { month: "Jan", deposits: 85000, withdrawals: 72000 },
-    { month: "Feb", deposits: 92000, withdrawals: 78000 },
-    { month: "Mar", deposits: 88000, withdrawals: 85000 },
-    { month: "Apr", deposits: 95000, withdrawals: 82000 },
-    { month: "May", deposits: 91000, withdrawals: 79000 },
-    { month: "Jun", deposits: 97000, withdrawals: 88000 },
-  ];
+  async function loadAMLData() {
+    try {
+      setLoading(true);
+      const { data: statements } = await supabase
+        .from("bank_statements")
+        .select("id")
+        .eq("project_id", projectId);
 
-  const activityData = [
-    { month: "Jan", maxBal: 98750, minBal: 45200, gap: 12 },
-    { month: "Feb", maxBal: 105000, minBal: 52300, gap: 8 },
-    { month: "Mar", maxBal: 95200, minBal: 48900, gap: 15 },
-  ];
+      if (!statements || statements.length === 0) {
+        setLoading(false);
+        return;
+      }
+
+      const { data: transactions } = await supabase
+        .from("transactions")
+        .select("*")
+        .in("statement_id", statements.map(s => s.id));
+
+      if (!transactions || transactions.length === 0) {
+        setLoading(false);
+        return;
+      }
+
+      // Filter to July 2024 - June 2025
+      const filtered = transactions.filter(t => {
+        const d = new Date(t.transaction_date);
+        return d >= new Date(2024, 6, 1) && d <= new Date(2025, 5, 30);
+      });
+
+      // Compute metrics
+      const totalCredits = filtered.filter(t => !t.is_debit).reduce((sum, t) => sum + Number(t.amount), 0);
+      const totalDebits = filtered.filter(t => t.is_debit).reduce((sum, t) => sum + Number(t.amount), 0);
+      const transactionCount = filtered.length;
+      const largestCredit = Math.max(...filtered.filter(t => !t.is_debit).map(t => Number(t.amount)), 0);
+      const largestDebit = Math.max(...filtered.filter(t => t.is_debit).map(t => Number(t.amount)), 0);
+      const uniqueDates = new Set(filtered.map(t => t.transaction_date)).size;
+
+      // Simple risk detection
+      const suspiciousKeywords = ["cash", "atm", "withdrawal", "wire", "international"];
+      const suspiciousTxns = filtered.filter(t => 
+        suspiciousKeywords.some(kw => t.description.toLowerCase().includes(kw)) || Number(t.amount) > 10000
+      );
+      const riskPct = transactionCount > 0 ? (suspiciousTxns.length / transactionCount) * 100 : 0;
+
+      setMetrics({
+        totalCredits,
+        totalDebits,
+        transactionCount,
+        largestCredit,
+        largestDebit,
+        daysActive: uniqueDates,
+        suspiciousCount: suspiciousTxns.length,
+      });
+
+      setRiskScore(Math.min(Math.round(riskPct), 100));
+
+      // Monthly deposits vs withdrawals
+      const monthlyMap = new Map<string, any>();
+      const startDate = new Date(2024, 6, 1);
+      for (let i = 0; i < 12; i++) {
+        const date = new Date(startDate);
+        date.setMonth(startDate.getMonth() + i);
+        const monthKey = date.toLocaleDateString("en-US", { month: "short" });
+        monthlyMap.set(monthKey, { month: monthKey, deposits: 0, withdrawals: 0 });
+      }
+
+      filtered.forEach(txn => {
+        const txnDate = new Date(txn.transaction_date);
+        const monthKey = txnDate.toLocaleDateString("en-US", { month: "short" });
+        const monthData = monthlyMap.get(monthKey);
+        if (monthData) {
+          if (txn.is_debit) {
+            monthData.withdrawals += Number(txn.amount);
+          } else {
+            monthData.deposits += Number(txn.amount);
+          }
+        }
+      });
+
+      setMonthlyData(Array.from(monthlyMap.values()));
+
+      // Suspicious activities
+      const activities = [
+        { name: "High-value transactions (>$10K)", count: filtered.filter(t => Number(t.amount) > 10000).length },
+        { name: "Cash transactions", count: filtered.filter(t => t.description.toLowerCase().includes("cash")).length },
+        { name: "International transfers", count: filtered.filter(t => t.description.toLowerCase().includes("international") || t.description.toLowerCase().includes("wire")).length },
+        { name: "Rapid transactions", count: 0 }, // Placeholder for now
+      ];
+
+      setSuspiciousActivities(activities);
+    } catch (error) {
+      console.error("Error loading AML data:", error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <div className="text-muted-foreground">Loading AML analysis...</div>
+      </div>
+    );
+  }
+
+  if (!metrics.transactionCount) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <div className="text-muted-foreground">No transactions found for July 2024 – June 2025.</div>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold">AML Risk Analysis</h2>
-        <Card className="w-auto">
-          <CardContent className="p-4">
-            <div className="text-center">
-              <div className="text-3xl font-bold">{riskScore}</div>
-              <div className="text-xs text-muted-foreground">Risk Score</div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Risk Score</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold">
+              {riskScore}
+              <Badge className="ml-2" variant={riskScore > 50 ? "destructive" : riskScore > 25 ? "default" : "secondary"}>
+                {riskScore > 50 ? "High" : riskScore > 25 ? "Medium" : "Low"}
+              </Badge>
             </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Total Credits</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{currencySymbol}{metrics.totalCredits.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Total Debits</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{currencySymbol}{metrics.totalDebits.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Transaction Count</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{metrics.transactionCount}</div>
           </CardContent>
         </Card>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-        {metrics.map((metric, idx) => (
-          <Card key={idx}>
-            <CardContent className="p-4 text-center">
-              <div className="text-lg font-bold">{metric.value.replace('₹', currencySymbol)}</div>
-              <div className="text-xs text-muted-foreground mt-1">{metric.label}</div>
-            </CardContent>
-          </Card>
-        ))}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Largest Credit</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-xl font-bold">{currencySymbol}{metrics.largestCredit.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Largest Debit</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-xl font-bold">{currencySymbol}{metrics.largestDebit.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Days Active</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-xl font-bold">{metrics.daysActive}</div>
+          </CardContent>
+        </Card>
       </div>
 
       <Card>
@@ -81,66 +223,33 @@ const AMLAnalysisTab = ({ projectId }: AMLAnalysisTabProps) => {
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="month" />
               <YAxis />
-              <Tooltip formatter={(value: number) => `${currencySymbol}${value.toLocaleString()}`} />
-              <Line type="monotone" dataKey="deposits" stroke="hsl(var(--chart-1))" strokeWidth={2} name="Deposits" />
-              <Line type="monotone" dataKey="withdrawals" stroke="hsl(var(--chart-2))" strokeWidth={2} name="Withdrawals" />
+              <Tooltip />
+              <Legend />
+              <Line type="monotone" dataKey="deposits" stroke="#10b981" name="Deposits" />
+              <Line type="monotone" dataKey="withdrawals" stroke="#ef4444" name="Withdrawals" />
             </LineChart>
           </ResponsiveContainer>
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Suspicious Activities</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {suspiciousActivities.map((item, idx) => (
-                <div key={idx} className="flex items-center justify-between p-3 border rounded-lg">
-                  <span className="text-sm">{item.activity}</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xl font-bold">{item.count}</span>
-                    {item.count > 0 && (
-                      <Button size="sm" variant="outline">View</Button>
-                    )}
-                  </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Suspicious Activities Detected</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2">
+            {suspiciousActivities.map((activity, idx) => (
+              <div key={idx} className="flex justify-between items-center p-2 border-b">
+                <span>{activity.name}</span>
+                <div className="flex items-center gap-2">
+                  <Badge variant={activity.count > 0 ? "destructive" : "secondary"}>{activity.count}</Badge>
+                  {activity.count > 0 && <Button variant="outline" size="sm">View</Button>}
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Account Activity Analysis</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b">
-                    <th className="text-left p-2">Month</th>
-                    <th className="text-right p-2">Max Balance</th>
-                    <th className="text-right p-2">Min Balance</th>
-                    <th className="text-right p-2">Days Gap</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {activityData.map((data, idx) => (
-                    <tr key={idx} className="border-b">
-                      <td className="p-2">{data.month}</td>
-                      <td className="text-right p-2">{`${currencySymbol}${data.maxBal.toLocaleString()}`}</td>
-                      <td className="text-right p-2">{`${currencySymbol}${data.minBal.toLocaleString()}`}</td>
-                      <td className="text-right p-2">{data.gap} days</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 };

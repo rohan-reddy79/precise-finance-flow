@@ -1,75 +1,149 @@
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useProjectCurrency } from "@/hooks/useProjectCurrency";
+import { supabase } from "@/integrations/supabase/client";
 
 interface ChequeReturnTabProps {
   projectId: string;
 }
 
+interface ChequeReturn {
+  date: string;
+  amount: number;
+  party: string;
+  reason: string;
+}
+
 const ChequeReturnTab = ({ projectId }: ChequeReturnTabProps) => {
   const { currencySymbol } = useProjectCurrency(projectId);
-  const summary = {
-    totalReturned: 3,
-    totalReturnAmount: 45000,
-    avgReturnAmount: 15000,
-    maxReturnAmount: 25000,
-    mostCommonReason: "Insufficient Funds",
-    daysWithMostReturns: "15-Jan-2020",
-  };
+  const [loading, setLoading] = useState(true);
+  const [chequeReturns, setChequeReturns] = useState<ChequeReturn[]>([]);
+  const [summary, setSummary] = useState({
+    totalReturned: 0,
+    totalAmount: 0,
+    avgAmount: 0,
+  });
 
-  const returnedCheques = [
-    { date: "2020-01-15", amount: 25000, party: "Vendor XYZ", bank: "HDFC Bank", chequeNum: "123456", reason: "Insufficient Funds", returnedBy: "HDFC Bank", penalty: 500 },
-    { date: "2020-02-22", amount: 12000, party: "ABC Supplier", bank: "ICICI Bank", chequeNum: "789012", reason: "Signature Mismatch", returnedBy: "ICICI Bank", penalty: 350 },
-    { date: "2020-03-10", amount: 8000, party: "Service Provider", bank: "SBI", chequeNum: "345678", reason: "Account Closed", returnedBy: "SBI", penalty: 250 },
-  ];
+  useEffect(() => {
+    loadChequeReturns();
+  }, [projectId]);
 
-  const reasonsBreakdown = [
-    { reason: "Insufficient Funds", count: 1, percentage: 33 },
-    { reason: "Signature Mismatch", count: 1, percentage: 33 },
-    { reason: "Account Closed", count: 1, percentage: 33 },
-    { reason: "Other", count: 0, percentage: 0 },
-  ];
+  async function loadChequeReturns() {
+    try {
+      setLoading(true);
+      const { data: statements } = await supabase
+        .from("bank_statements")
+        .select("id")
+        .eq("project_id", projectId);
+
+      if (!statements || statements.length === 0) {
+        setLoading(false);
+        return;
+      }
+
+      const { data: transactions } = await supabase
+        .from("transactions")
+        .select("*")
+        .in("statement_id", statements.map(s => s.id));
+
+      if (!transactions || transactions.length === 0) {
+        setLoading(false);
+        return;
+      }
+
+      // Detect cheque returns by description keywords
+      const chequeKeywords = ["cheque return", "chq rtn", "cheque dishonoured", "cheque bounced", "chq bounce", "cheque dishonored"];
+      
+      const returns = transactions
+        .filter(txn => 
+          chequeKeywords.some(kw => txn.description.toLowerCase().includes(kw))
+        )
+        .map(txn => ({
+          date: txn.transaction_date,
+          amount: Number(txn.amount),
+          party: txn.merchant || txn.description.substring(0, 40),
+          reason: txn.description.toLowerCase().includes("insufficient") ? "Insufficient Funds" : "Other",
+        }));
+
+      setChequeReturns(returns);
+
+      if (returns.length > 0) {
+        const totalAmount = returns.reduce((sum, r) => sum + r.amount, 0);
+        setSummary({
+          totalReturned: returns.length,
+          totalAmount,
+          avgAmount: totalAmount / returns.length,
+        });
+      }
+    } catch (error) {
+      console.error("Error loading cheque returns:", error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <div className="text-muted-foreground">Loading cheque return data...</div>
+      </div>
+    );
+  }
+
+  if (chequeReturns.length === 0) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-center">
+              <Badge variant="secondary" className="text-lg">No Cheque Returns Detected</Badge>
+              <p className="text-sm text-muted-foreground mt-2">
+                No transactions matching cheque return patterns were found in your statements.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
       <h2 className="text-2xl font-bold">Cheque Return Analysis</h2>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>
-          <CardContent className="p-4 text-center">
-            <div className="text-2xl font-bold text-red-600">{summary.totalReturned}</div>
-            <div className="text-xs text-muted-foreground mt-1">Total Returned</div>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Total Returned</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{summary.totalReturned}</div>
           </CardContent>
         </Card>
+
         <Card>
-          <CardContent className="p-4 text-center">
-            <div className="text-lg font-bold">{currencySymbol}{summary.totalReturnAmount.toLocaleString()}</div>
-            <div className="text-xs text-muted-foreground mt-1">Total Amount</div>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Total Amount</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{currencySymbol}{summary.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
           </CardContent>
         </Card>
+
         <Card>
-          <CardContent className="p-4 text-center">
-            <div className="text-lg font-bold">{currencySymbol}{summary.avgReturnAmount.toLocaleString()}</div>
-            <div className="text-xs text-muted-foreground mt-1">Avg Return</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 text-center">
-            <div className="text-lg font-bold">{currencySymbol}{summary.maxReturnAmount.toLocaleString()}</div>
-            <div className="text-xs text-muted-foreground mt-1">Max Return</div>
-          </CardContent>
-        </Card>
-        <Card className="col-span-2">
-          <CardContent className="p-4">
-            <div className="text-sm font-bold">{summary.mostCommonReason}</div>
-            <div className="text-xs text-muted-foreground mt-1">Most Common Reason</div>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Average Amount</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{currencySymbol}{summary.avgAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
           </CardContent>
         </Card>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Detailed Cheque Return Table</CardTitle>
+          <CardTitle>Cheque Returns Details</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
@@ -77,49 +151,24 @@ const ChequeReturnTab = ({ projectId }: ChequeReturnTabProps) => {
               <thead>
                 <tr className="border-b">
                   <th className="text-left p-2">Date</th>
-                  <th className="text-right p-2">Amount</th>
-                  <th className="text-left p-2">Party / Counterparty</th>
-                  <th className="text-left p-2">Bank Branch</th>
-                  <th className="text-left p-2">Cheque Number</th>
-                  <th className="text-left p-2">Reason for Return</th>
-                  <th className="text-left p-2">Returned by</th>
-                  <th className="text-right p-2">Penalty</th>
+                  <th className="text-right p-2">Amount ({currencySymbol})</th>
+                  <th className="text-left p-2">Party</th>
+                  <th className="text-left p-2">Reason</th>
                 </tr>
               </thead>
               <tbody>
-                {returnedCheques.map((cheque, idx) => (
+                {chequeReturns.map((ret, idx) => (
                   <tr key={idx} className="border-b hover:bg-muted/50">
-                    <td className="p-2">{cheque.date}</td>
-                    <td className="text-right p-2 font-semibold text-red-600">{currencySymbol}{cheque.amount.toLocaleString()}</td>
-                    <td className="p-2">{cheque.party}</td>
-                    <td className="p-2">{cheque.bank}</td>
-                    <td className="p-2 font-mono text-xs">{cheque.chequeNum}</td>
+                    <td className="p-2">{new Date(ret.date).toLocaleDateString()}</td>
+                    <td className="text-right p-2 font-medium">{ret.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td className="p-2">{ret.party}</td>
                     <td className="p-2">
-                      <Badge variant="destructive" className="text-xs">{cheque.reason}</Badge>
+                      <Badge variant="destructive">{ret.reason}</Badge>
                     </td>
-                    <td className="p-2">{cheque.returnedBy}</td>
-                    <td className="text-right p-2">{currencySymbol}{cheque.penalty}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Return Reasons Breakdown</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {reasonsBreakdown.map((item, idx) => (
-              <div key={idx} className="p-4 border rounded-lg text-center">
-                <div className="text-2xl font-bold">{item.count}</div>
-                <div className="text-xs text-muted-foreground mt-1">{item.reason}</div>
-                <div className="text-sm font-semibold mt-2">{item.percentage}%</div>
-              </div>
-            ))}
           </div>
         </CardContent>
       </Card>

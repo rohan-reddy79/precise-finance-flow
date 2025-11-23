@@ -21,6 +21,7 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
     endDate: '',
     openingBalance: null as number | null,
     closingBalance: null as number | null,
+    earliestStatementDate: null as string | null,
   });
 
   useEffect(() => {
@@ -65,15 +66,19 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
       const dates = transactions.map(t => new Date(t.transaction_date)).sort((a, b) => a.getTime() - b.getTime());
 
       // Extract balances from statements
-      // Sort statements by period to get earliest opening and latest closing
-      const sortedStatements = statements.sort((a, b) => {
-        const dateA = new Date(a.statement_period_start || 0);
-        const dateB = new Date(b.statement_period_start || 0);
-        return dateA.getTime() - dateB.getTime();
-      });
-      
-      const earliestStatement = sortedStatements[0];
-      const latestStatement = sortedStatements[sortedStatements.length - 1];
+      const earliestStatement = statements
+        .filter(s => s.statement_period_start)
+        .sort((a, b) => 
+          new Date(a.statement_period_start!).getTime() - 
+          new Date(b.statement_period_start!).getTime()
+        )[0];
+
+      const latestStatement = statements
+        .filter(s => s.closing_balance !== null)
+        .sort((a, b) => 
+          new Date(b.statement_period_start!).getTime() - 
+          new Date(a.statement_period_start!).getTime()
+        )[0];
       
       const openingBalance = earliestStatement?.opening_balance || null;
       const closingBalance = latestStatement?.closing_balance || null;
@@ -87,6 +92,7 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
         endDate: dates[dates.length - 1]?.toLocaleDateString() || '',
         openingBalance,
         closingBalance,
+        earliestStatementDate: earliestStatement?.statement_period_start || null,
       });
 
       setLoading(false);
@@ -108,36 +114,49 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
     <div className="space-y-6">
       <h2 className="text-2xl font-bold">Financial Summary</h2>
       
-      {/* Balance Cards - First Row */}
-      {(summary.openingBalance !== null || summary.closingBalance !== null) && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {summary.openingBalance !== null && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-muted-foreground">Opening Balance</CardTitle>
-              </CardHeader>
-              <CardContent>
+      {/* Initial Balance Card - Always Show */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground">Initial Balance</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {summary.openingBalance !== null ? (
+              <>
                 <p className="text-2xl font-bold text-blue-600">
                   {currencySymbol}{summary.openingBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                 </p>
-              </CardContent>
-            </Card>
-          )}
-          
-          {summary.closingBalance !== null && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-muted-foreground">Closing Balance</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-2xl font-bold text-blue-600">
-                  {currencySymbol}{summary.closingBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                <p className="text-xs text-muted-foreground mt-1">
+                  As of {summary.earliestStatementDate ? new Date(summary.earliestStatementDate).toLocaleDateString() : summary.startDate}
                 </p>
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      )}
+              </>
+            ) : (
+              <>
+                <p className="text-2xl font-bold text-muted-foreground">—</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Not available from statements
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
+        
+        {summary.closingBalance !== null && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm text-muted-foreground">Closing Balance</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold text-blue-600">
+                {currencySymbol}{summary.closingBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                As of {summary.endDate}
+              </p>
+            </CardContent>
+          </Card>
+        )}
+      </div>
       
       {/* Transaction Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
