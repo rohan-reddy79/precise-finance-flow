@@ -11,8 +11,9 @@ interface MonthlySummaryTabProps {
 
 interface MonthlyData {
   month: string;
-  openingBalance: number;
-  closingBalance: number;
+  sortKey: number;
+  openingBalance: number | null;
+  closingBalance: number | null;
   totalCredit: number;
   totalDebit: number;
   creditCount: number;
@@ -59,12 +60,16 @@ const MonthlySummaryTab = ({ projectId }: MonthlySummaryTabProps) => {
       // Initialize all months from July 2024 to June 2025
       const startDate = new Date(2024, 6, 1); // July 2024
       for (let i = 0; i < 12; i++) {
-        const date = new Date(startDate.getFullYear(), startDate.getMonth() + i, 1);
-        const key = date.toLocaleDateString("en-US", { year: "numeric", month: "short" });
-        monthlyMap.set(key, {
-          month: key,
-          openingBalance: 0,
-          closingBalance: 0,
+        const date = new Date(startDate);
+        date.setMonth(startDate.getMonth() + i);
+        const monthKey = date.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+        const sortKey = date.getFullYear() * 12 + date.getMonth();
+        
+        monthlyMap.set(monthKey, {
+          month: monthKey,
+          sortKey,
+          openingBalance: null,
+          closingBalance: null,
           totalCredit: 0,
           totalDebit: 0,
           creditCount: 0,
@@ -76,7 +81,7 @@ const MonthlySummaryTab = ({ projectId }: MonthlySummaryTabProps) => {
       // Populate with transaction data
       transactions.forEach((txn) => {
         const date = new Date(txn.transaction_date);
-        const monthKey = date.toLocaleDateString("en-US", { year: "numeric", month: "short" });
+        const monthKey = date.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
         
         if (monthlyMap.has(monthKey)) {
           const monthData = monthlyMap.get(monthKey)!;
@@ -95,22 +100,22 @@ const MonthlySummaryTab = ({ projectId }: MonthlySummaryTabProps) => {
 
       // Add balance information from statements
       statements.forEach((stmt) => {
-        if (stmt.statement_period_start && stmt.opening_balance) {
+        if (stmt.statement_period_start) {
           const date = new Date(stmt.statement_period_start);
-          const monthKey = date.toLocaleDateString("en-US", { year: "numeric", month: "short" });
+          const monthKey = date.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
           if (monthlyMap.has(monthKey)) {
             const monthData = monthlyMap.get(monthKey)!;
-            monthData.openingBalance = parseFloat(stmt.opening_balance.toString());
-            if (stmt.closing_balance) {
+            if (stmt.opening_balance !== null) {
+              monthData.openingBalance = parseFloat(stmt.opening_balance.toString());
+            }
+            if (stmt.closing_balance !== null) {
               monthData.closingBalance = parseFloat(stmt.closing_balance.toString());
             }
           }
         }
       });
 
-      const sortedData = Array.from(monthlyMap.values()).sort((a, b) => {
-        return new Date(a.month).getTime() - new Date(b.month).getTime();
-      });
+      const sortedData = Array.from(monthlyMap.values()).sort((a, b) => a.sortKey - b.sortKey);
 
       setMonthlyData(sortedData);
       setLoading(false);
@@ -175,6 +180,9 @@ const MonthlySummaryTab = ({ projectId }: MonthlySummaryTabProps) => {
       <Card>
         <CardHeader>
           <CardTitle>Detailed Monthly Breakdown</CardTitle>
+          <p className="text-sm text-muted-foreground mt-2">
+            Balance columns show "—" when your statements don't provide opening/closing balances.
+          </p>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
@@ -196,7 +204,9 @@ const MonthlySummaryTab = ({ projectId }: MonthlySummaryTabProps) => {
                   <tr key={idx} className="border-b hover:bg-muted/50">
                     <td className="p-3 font-medium">{month.month}</td>
                     <td className="text-right p-3">
-                      {currencySymbol}{month.openingBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      {month.openingBalance !== null 
+                        ? `${currencySymbol}${month.openingBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}` 
+                        : "—"}
                     </td>
                     <td className="text-right p-3 text-green-600">
                       {currencySymbol}{month.totalCredit.toLocaleString(undefined, { maximumFractionDigits: 2 })}
@@ -210,7 +220,9 @@ const MonthlySummaryTab = ({ projectId }: MonthlySummaryTabProps) => {
                       {currencySymbol}{month.netFlow.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                     </td>
                     <td className="text-right p-3 font-medium">
-                      {currencySymbol}{month.closingBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      {month.closingBalance !== null 
+                        ? `${currencySymbol}${month.closingBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}` 
+                        : "—"}
                     </td>
                   </tr>
                 ))}
