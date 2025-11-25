@@ -556,9 +556,14 @@ async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency
     // Patterns for opening balance (search in first 3000 chars)
     const headerSection = fullText.substring(0, 3000);
     const openingPatterns = [
-      /(?:opening|previous|beginning|starting)\s*balance[:\s]*\$?\s*([\d,]+\.\d{2})/i,
-      /balance\s*forward[:\s]*\$?\s*([\d,]+\.\d{2})/i,
-      /previous\s*statement\s*balance[:\s]*\$?\s*([\d,]+\.\d{2})/i,
+      // With currency symbols
+      /(?:opening|previous|beginning|starting|initial)\s*balance[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
+      /balance\s*forward[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
+      /previous\s*statement\s*balance[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
+      /balance\s*(?:brought|carried)\s*forward[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
+      // Without currency symbols but with keywords
+      /(?:opening|beginning|starting)\s*bal[:\s]*([\d,]+\.?\d{0,2})/i,
+      /(?:previous|last)\s*bal(?:ance)?[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
     ];
     
     for (const pattern of openingPatterns) {
@@ -574,9 +579,15 @@ async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency
     // Patterns for closing balance (search in last 3000 chars)
     const footerSection = fullText.substring(Math.max(0, fullText.length - 3000));
     const closingPatterns = [
-      /(?:closing|ending|current|new)\s*balance[:\s]*\$?\s*([\d,]+\.\d{2})/i,
-      /balance\s*(?:as\s*of|on)[:\s]*[\d\/\-]+[:\s]*\$?\s*([\d,]+\.\d{2})/i,
-      /total\s*balance[:\s]*\$?\s*([\d,]+\.\d{2})/i,
+      // With currency symbols
+      /(?:closing|ending|current|new|final)\s*balance[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
+      /balance\s*(?:as\s*of|on)[:\s]*[\d\/\-]+[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
+      /total\s*balance[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
+      /(?:end|close)\s*bal[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
+      // Account balance patterns
+      /account\s*balance[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
+      /available\s*balance[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
+      /ledger\s*balance[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
     ];
     
     for (const pattern of closingPatterns) {
