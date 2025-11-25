@@ -28,6 +28,8 @@ export const AddBalanceDialog = ({ projectId, open, onOpenChange, onSuccess, edi
   const [selectedStatementId, setSelectedStatementId] = useState<string>("");
   const [openingBalance, setOpeningBalance] = useState<string>("");
   const [closingBalance, setClosingBalance] = useState<string>("");
+  const [statementPeriodStart, setStatementPeriodStart] = useState<string>("");
+  const [statementPeriodEnd, setStatementPeriodEnd] = useState<string>("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -55,20 +57,22 @@ export const AddBalanceDialog = ({ projectId, open, onOpenChange, onSuccess, edi
   const loadExistingBalances = async (statementId: string) => {
     const { data, error } = await supabase
       .from("bank_statements")
-      .select("opening_balance, closing_balance")
+      .select("opening_balance, closing_balance, statement_period_start, statement_period_end")
       .eq("id", statementId)
       .maybeSingle();
 
     if (!error && data) {
       setOpeningBalance(data.opening_balance?.toString() || "");
       setClosingBalance(data.closing_balance?.toString() || "");
+      setStatementPeriodStart(data.statement_period_start || "");
+      setStatementPeriodEnd(data.statement_period_end || "");
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!selectedStatementId || !openingBalance || !closingBalance) {
+    if (!selectedStatementId || !openingBalance || !closingBalance || !statementPeriodStart || !statementPeriodEnd) {
       toast.error("Please fill in all fields");
       return;
     }
@@ -81,6 +85,12 @@ export const AddBalanceDialog = ({ projectId, open, onOpenChange, onSuccess, edi
       return;
     }
 
+    // Validate dates
+    if (new Date(statementPeriodStart) > new Date(statementPeriodEnd)) {
+      toast.error("Start date must be before or equal to end date");
+      return;
+    }
+
     setLoading(true);
 
     const { error } = await supabase
@@ -88,21 +98,25 @@ export const AddBalanceDialog = ({ projectId, open, onOpenChange, onSuccess, edi
       .update({
         opening_balance: opening,
         closing_balance: closing,
+        statement_period_start: statementPeriodStart,
+        statement_period_end: statementPeriodEnd,
       })
       .eq("id", selectedStatementId);
 
     setLoading(false);
 
     if (error) {
-      toast.error("Failed to update balance");
+      toast.error("Failed to update statement");
       console.error(error);
       return;
     }
 
-    toast.success(editStatementId ? "Balance data updated successfully" : "Balance data added successfully");
+    toast.success(editStatementId ? "Statement period and balance data updated successfully" : "Balance data added successfully");
     setSelectedStatementId("");
     setOpeningBalance("");
     setClosingBalance("");
+    setStatementPeriodStart("");
+    setStatementPeriodEnd("");
     onSuccess();
     onOpenChange(false);
   };
@@ -143,15 +157,36 @@ export const AddBalanceDialog = ({ projectId, open, onOpenChange, onSuccess, edi
           </div>
 
           {selectedStatement && (
-            <div className="bg-muted p-3 rounded-md text-sm">
-              <p className="font-medium mb-1">Statement Period:</p>
-              <p className="text-muted-foreground">
-                {selectedStatement.statement_period_start && selectedStatement.statement_period_end
-                  ? `${new Date(selectedStatement.statement_period_start).toLocaleDateString()} - ${new Date(selectedStatement.statement_period_end).toLocaleDateString()}`
-                  : "Period not available"}
+            <div className="bg-muted/50 p-3 rounded-md text-sm border border-border">
+              <p className="text-muted-foreground text-xs mb-2">
+                If the dates were extracted incorrectly from your PDF, you can correct them below
               </p>
             </div>
           )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="startDate">Statement Start Date</Label>
+              <Input
+                id="startDate"
+                type="date"
+                value={statementPeriodStart}
+                onChange={(e) => setStatementPeriodStart(e.target.value)}
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="endDate">Statement End Date</Label>
+              <Input
+                id="endDate"
+                type="date"
+                value={statementPeriodEnd}
+                onChange={(e) => setStatementPeriodEnd(e.target.value)}
+                required
+              />
+            </div>
+          </div>
 
           <div className="space-y-2">
             <Label htmlFor="opening">Opening Balance</Label>
