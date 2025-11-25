@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2 } from "lucide-react";
+import { Loader2, AlertCircle } from "lucide-react";
 
 import { useProjectCurrency } from "@/hooks/useProjectCurrency";
 
@@ -116,9 +116,12 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
       
       {/* Initial Balance Card - Always Show */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card>
+        <Card className={summary.openingBalance === null ? "border-2 border-amber-500/30" : ""}>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground">Initial Balance</CardTitle>
+            <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+              {summary.openingBalance === null && <AlertCircle className="h-4 w-4 text-amber-500" />}
+              Initial Balance
+            </CardTitle>
           </CardHeader>
           <CardContent>
             {summary.openingBalance !== null ? (
@@ -131,12 +134,12 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
                 </p>
               </>
             ) : (
-              <>
-                <p className="text-2xl font-bold text-muted-foreground">—</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Not available from statements
+              <div className="space-y-2">
+                <p className="text-lg font-semibold text-amber-600">Balance data not extracted</p>
+                <p className="text-xs text-muted-foreground">
+                  Our parser couldn't find opening/closing balance fields in your bank's PDF format. This doesn't affect transaction tracking—all credits and debits are captured correctly.
                 </p>
-              </>
+              </div>
             )}
           </CardContent>
         </Card>
