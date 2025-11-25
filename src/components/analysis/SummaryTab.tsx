@@ -28,6 +28,7 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
   });
   const [isSafeBalanceAccount, setIsSafeBalanceAccount] = useState(false);
   const [balanceDialogOpen, setBalanceDialogOpen] = useState(false);
+  const [editStatementId, setEditStatementId] = useState<string | null>(null);
 
   useEffect(() => {
     loadSummary();
@@ -94,6 +95,11 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
       const openingBalance = earliestStatement?.opening_balance || null;
       const closingBalance = latestStatement?.closing_balance || null;
 
+      // Store earliest statement ID for editing
+      if (earliestStatement) {
+        setEditStatementId(earliestStatement.id);
+      }
+
       setSummary({
         totalTransactions: transactions.length,
         totalCredit,
@@ -128,8 +134,12 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
       <AddBalanceDialog 
         projectId={projectId}
         open={balanceDialogOpen}
-        onOpenChange={setBalanceDialogOpen}
+        onOpenChange={(open) => {
+          setBalanceDialogOpen(open);
+          if (!open) setEditStatementId(null);
+        }}
         onSuccess={loadSummary}
+        editStatementId={editStatementId}
       />
       
       <h2 className="text-2xl font-bold">Financial Summary</h2>
@@ -171,6 +181,17 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
                 <p className="text-xs text-muted-foreground mt-1">
                   As of {summary.earliestStatementDate ? new Date(summary.earliestStatementDate).toLocaleDateString() : summary.startDate}
                 </p>
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  onClick={() => {
+                    setEditStatementId(editStatementId);
+                    setBalanceDialogOpen(true);
+                  }}
+                  className="mt-2 h-7 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  Edit
+                </Button>
               </>
             ) : (
               <div className="space-y-2">
@@ -187,7 +208,10 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
                 <Button 
                   variant="outline" 
                   size="sm"
-                  onClick={() => setBalanceDialogOpen(true)}
+                  onClick={() => {
+                    setEditStatementId(null);
+                    setBalanceDialogOpen(true);
+                  }}
                   className="mt-2 h-8 text-xs"
                 >
                   Add Balance Manually

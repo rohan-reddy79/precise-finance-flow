@@ -25,6 +25,7 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
   }>({ openingBalance: null, closingBalance: null, earliestStatementDate: null });
   const [isSafeBalanceAccount, setIsSafeBalanceAccount] = useState(false);
   const [balanceDialogOpen, setBalanceDialogOpen] = useState(false);
+  const [editStatementId, setEditStatementId] = useState<string | null>(null);
   const currencySymbol = currency === 'INR' ? '₹' : currency === 'GBP' ? '£' : currency === 'EUR' ? '€' : '$';
 
   useEffect(() => {
@@ -73,6 +74,11 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
         closingBalance: latestStatement?.closing_balance || null,
         earliestStatementDate: earliestStatement?.statement_period_start || null,
       });
+      
+      // Store earliest statement ID for editing
+      if (earliestStatement) {
+        setEditStatementId(earliestStatement.id);
+      }
 
       // Fetch all transactions
       const { data: transactions } = await supabase
@@ -177,8 +183,12 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
       <AddBalanceDialog 
         projectId={projectId}
         open={balanceDialogOpen}
-        onOpenChange={setBalanceDialogOpen}
+        onOpenChange={(open) => {
+          setBalanceDialogOpen(open);
+          if (!open) setEditStatementId(null);
+        }}
         onSuccess={loadData}
+        editStatementId={editStatementId}
       />
       
       <h2 className="text-2xl font-bold">Financial Overview</h2>
@@ -224,6 +234,17 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
                   Closing: {currencySymbol}{balanceInfo.closingBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                 </p>
               )}
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => {
+                  setEditStatementId(editStatementId);
+                  setBalanceDialogOpen(true);
+                }}
+                className="mt-3"
+              >
+                Edit Balance
+              </Button>
             </>
           ) : (
             <div className="space-y-3">
@@ -240,7 +261,10 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
               <Button 
                 variant="outline" 
                 size="sm"
-                onClick={() => setBalanceDialogOpen(true)}
+                onClick={() => {
+                  setEditStatementId(null);
+                  setBalanceDialogOpen(true);
+                }}
                 className="mt-2"
               >
                 Add Balance Manually
