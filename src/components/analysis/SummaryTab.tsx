@@ -29,6 +29,7 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
   const [isSafeBalanceAccount, setIsSafeBalanceAccount] = useState(false);
   const [balanceDialogOpen, setBalanceDialogOpen] = useState(false);
   const [editStatementId, setEditStatementId] = useState<string | null>(null);
+  const [latestStatementId, setLatestStatementId] = useState<string | null>(null);
 
   useEffect(() => {
     loadSummary();
@@ -98,6 +99,11 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
       // Store earliest statement ID for editing
       if (earliestStatement) {
         setEditStatementId(earliestStatement.id);
+      }
+      
+      // Store latest statement ID for editing closing balance
+      if (latestStatement) {
+        setLatestStatementId(latestStatement.id);
       }
 
       setSummary({
@@ -237,6 +243,17 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
               <p className="text-xs text-muted-foreground mt-1">
                 As of {summary.endDate}
               </p>
+              <Button 
+                variant="ghost" 
+                size="sm"
+                onClick={() => {
+                  setEditStatementId(latestStatementId);
+                  setBalanceDialogOpen(true);
+                }}
+                className="mt-2 h-7 text-xs text-muted-foreground hover:text-foreground"
+              >
+                Edit
+              </Button>
             </CardContent>
           </Card>
         )}
