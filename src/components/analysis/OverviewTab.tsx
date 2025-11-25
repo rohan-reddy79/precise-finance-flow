@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, AlertCircle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Loader2, AlertCircle, Info } from "lucide-react";
+import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
+import { AddBalanceDialog } from "./AddBalanceDialog";
 
 interface OverviewTabProps {
   projectId: string;
@@ -19,6 +23,8 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
     closingBalance: number | null;
     earliestStatementDate: string | null;
   }>({ openingBalance: null, closingBalance: null, earliestStatementDate: null });
+  const [isSafeBalanceAccount, setIsSafeBalanceAccount] = useState(false);
+  const [balanceDialogOpen, setBalanceDialogOpen] = useState(false);
   const currencySymbol = currency === 'INR' ? '₹' : currency === 'GBP' ? '£' : currency === 'EUR' ? '€' : '$';
 
   useEffect(() => {
@@ -40,6 +46,12 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
 
       const statementIds = statements.map(s => s.id);
       setCurrency(statements[0]?.currency || 'USD');
+
+      // Check if this is a SafeBalance account
+      const hasSafeBalance = statements.some(s => 
+        s.file_name?.toLowerCase().includes('safebalance')
+      );
+      setIsSafeBalanceAccount(hasSafeBalance);
 
       // Extract balance information
       const earliestStatement = statements
@@ -158,27 +170,51 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
     );
   }
 
+  const hasBalanceData = balanceInfo.openingBalance !== null;
+
   return (
     <div className="space-y-6">
+      <AddBalanceDialog 
+        projectId={projectId}
+        open={balanceDialogOpen}
+        onOpenChange={setBalanceDialogOpen}
+        onSuccess={loadData}
+      />
+      
+      <h2 className="text-2xl font-bold">Financial Overview</h2>
+      
       {/* Initial Balance Card - Always Visible */}
-      <Card className="border-2 border-primary/20">
+      <Card className={hasBalanceData ? "border-2 border-primary/20" : "border-2 border-amber-500/30"}>
         <CardHeader className="pb-2">
-          <CardTitle className="text-lg flex items-center gap-2">
-            {balanceInfo.openingBalance !== null ? (
-              <>Initial Balance</>
-            ) : (
-              <>
-                <AlertCircle className="h-5 w-5 text-amber-500" />
-                Initial Balance - Not Available
-              </>
+          <CardTitle className="text-lg flex items-center gap-2 justify-between">
+            <div className="flex items-center gap-2">
+              {!hasBalanceData && <AlertCircle className="h-5 w-5 text-amber-500" />}
+              <span>Initial Balance</span>
+              <TooltipProvider>
+                <UITooltip>
+                  <TooltipTrigger asChild>
+                    <Info className="h-4 w-4 text-muted-foreground cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    <p className="text-sm">
+                      Balance tracking depends on your bank's statement format. {isSafeBalanceAccount && "Bank of America SafeBalance accounts don't include balance information in PDFs. "} You can manually add balances for accurate tracking.
+                    </p>
+                  </TooltipContent>
+                </UITooltip>
+              </TooltipProvider>
+            </div>
+            {hasBalanceData && (
+              <Badge variant="secondary" className="bg-green-50 text-green-700 border-green-200">
+                Auto-extracted
+              </Badge>
             )}
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {balanceInfo.openingBalance !== null ? (
+          {hasBalanceData ? (
             <>
               <p className="text-3xl font-bold text-primary">
-                {currencySymbol}{balanceInfo.openingBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                {currencySymbol}{balanceInfo.openingBalance!.toLocaleString(undefined, { maximumFractionDigits: 2 })}
               </p>
               <p className="text-sm text-muted-foreground mt-2">
                 As of {balanceInfo.earliestStatementDate ? new Date(balanceInfo.earliestStatementDate).toLocaleDateString() : 'statement start'}
@@ -190,14 +226,25 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
               )}
             </>
           ) : (
-            <div className="space-y-2">
-              <p className="text-lg font-semibold text-muted-foreground">Balance data not extracted from your statements</p>
+            <div className="space-y-3">
+              <p className="text-lg font-semibold text-amber-600">
+                {isSafeBalanceAccount 
+                  ? "Bank of America SafeBalance Account"
+                  : "Balance Data Not Available"}
+              </p>
               <p className="text-sm text-muted-foreground">
-                Our parser couldn't find opening/closing balance fields in your bank's PDF format. This doesn't affect transaction tracking—all credits and debits are captured correctly.
+                {isSafeBalanceAccount 
+                  ? "Your Bank of America SafeBalance account statements don't include balance information. This is normal for this account type. All transaction amounts are accurately tracked."
+                  : "Our parser couldn't find opening/closing balance fields in your bank's PDF format. This doesn't affect transaction tracking—all credits and debits are captured correctly."}
               </p>
-              <p className="text-xs text-muted-foreground italic mt-2">
-                Note: If you need balance tracking, consider the first transaction date as your reference point.
-              </p>
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => setBalanceDialogOpen(true)}
+                className="mt-2"
+              >
+                Add Balance Manually
+              </Button>
             </div>
           )}
         </CardContent>
@@ -252,9 +299,9 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="month" />
                 <YAxis />
-                <Tooltip formatter={(value: number) => `${currencySymbol}${value.toLocaleString()}`} />
-                <Line type="monotone" dataKey="netCashFlow" stroke="hsl(var(--primary))" strokeWidth={2} name="Net Cash Flow" />
-                <Line type="monotone" dataKey="netBizFlow" stroke="hsl(var(--chart-2))" strokeWidth={2} name="Net Business Flow" />
+                <Tooltip formatter={(value: number) => currencySymbol + value.toLocaleString()} />
+                <Line type="monotone" dataKey="netCashFlow" stroke="#8884d8" name="Net Cash Flow" />
+                <Line type="monotone" dataKey="netBizFlow" stroke="#82ca9d" name="Net Business Flow" />
               </LineChart>
             </ResponsiveContainer>
           </CardContent>
@@ -262,7 +309,7 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
 
         <Card>
           <CardHeader>
-            <CardTitle>Monthly Average Balance</CardTitle>
+            <CardTitle>Average Monthly Balance</CardTitle>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
@@ -270,8 +317,8 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="month" />
                 <YAxis />
-                <Tooltip formatter={(value: number) => `${currencySymbol}${value.toLocaleString()}`} />
-                <Bar dataKey="avgBalance" fill="hsl(var(--chart-3))" name="Avg Balance" />
+                <Tooltip formatter={(value: number) => currencySymbol + value.toLocaleString()} />
+                <Bar dataKey="avgBalance" fill="#8884d8" name="Average Balance" />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
@@ -281,28 +328,28 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
-            <CardTitle>Top 10 Counterparties - Credit Txns</CardTitle>
+            <CardTitle>Top 10 Credit Counterparties</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b">
-                    <th className="text-left py-2">Counterparty</th>
-                    <th className="text-right py-2">Amount ({currencySymbol})</th>
-                    <th className="text-right py-2">Amount %</th>
-                    <th className="text-right py-2">Txn Count</th>
-                    <th className="text-right py-2">Txn %</th>
+                    <th className="text-left p-2">Name</th>
+                    <th className="text-right p-2">Amount</th>
+                    <th className="text-right p-2">% of Credit</th>
+                    <th className="text-right p-2">Txns</th>
+                    <th className="text-right p-2">% of Total</th>
                   </tr>
                 </thead>
                 <tbody>
                   {topCounterparties.credit.map((cp, idx) => (
-                    <tr key={idx} className="border-b">
-                      <td className="py-2">{cp.name}</td>
-                      <td className="text-right">{currencySymbol}{cp.amount.toLocaleString()}</td>
-                      <td className="text-right">{cp.percentage}%</td>
-                      <td className="text-right">{cp.txnCount}</td>
-                      <td className="text-right">{cp.txnPercentage}%</td>
+                    <tr key={idx} className="border-b hover:bg-muted/50">
+                      <td className="p-2 font-medium">{cp.name}</td>
+                      <td className="text-right p-2">{currencySymbol}{cp.amount.toLocaleString()}</td>
+                      <td className="text-right p-2">{cp.percentage}%</td>
+                      <td className="text-right p-2">{cp.txnCount}</td>
+                      <td className="text-right p-2">{cp.txnPercentage}%</td>
                     </tr>
                   ))}
                 </tbody>
@@ -313,28 +360,28 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
 
         <Card>
           <CardHeader>
-            <CardTitle>Top 10 Counterparties - Debit Txns</CardTitle>
+            <CardTitle>Top 10 Debit Counterparties</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b">
-                    <th className="text-left py-2">Counterparty</th>
-                    <th className="text-right py-2">Amount ({currencySymbol})</th>
-                    <th className="text-right py-2">Amount %</th>
-                    <th className="text-right py-2">Txn Count</th>
-                    <th className="text-right py-2">Txn %</th>
+                    <th className="text-left p-2">Name</th>
+                    <th className="text-right p-2">Amount</th>
+                    <th className="text-right p-2">% of Debit</th>
+                    <th className="text-right p-2">Txns</th>
+                    <th className="text-right p-2">% of Total</th>
                   </tr>
                 </thead>
                 <tbody>
                   {topCounterparties.debit.map((cp, idx) => (
-                    <tr key={idx} className="border-b">
-                      <td className="py-2">{cp.name}</td>
-                      <td className="text-right">{currencySymbol}{cp.amount.toLocaleString()}</td>
-                      <td className="text-right">{cp.percentage}%</td>
-                      <td className="text-right">{cp.txnCount}</td>
-                      <td className="text-right">{cp.txnPercentage}%</td>
+                    <tr key={idx} className="border-b hover:bg-muted/50">
+                      <td className="p-2 font-medium">{cp.name}</td>
+                      <td className="text-right p-2">{currencySymbol}{cp.amount.toLocaleString()}</td>
+                      <td className="text-right p-2">{cp.percentage}%</td>
+                      <td className="text-right p-2">{cp.txnCount}</td>
+                      <td className="text-right p-2">{cp.txnPercentage}%</td>
                     </tr>
                   ))}
                 </tbody>

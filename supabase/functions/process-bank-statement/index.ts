@@ -556,6 +556,9 @@ async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency
     // Patterns for opening balance (search in first 3000 chars)
     const headerSection = fullText.substring(0, 3000);
     const openingPatterns = [
+      // Bank of America specific patterns
+      /beginning\s*balance\s*on\s*\w+\s*\d+[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
+      /previous\s*balance[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
       // With currency symbols
       /(?:opening|previous|beginning|starting|initial)\s*balance[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
       /balance\s*forward[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
@@ -564,6 +567,8 @@ async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency
       // Without currency symbols but with keywords
       /(?:opening|beginning|starting)\s*bal[:\s]*([\d,]+\.?\d{0,2})/i,
       /(?:previous|last)\s*bal(?:ance)?[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
+      // Transaction table patterns - look for balance in rows
+      /balance[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
     ];
     
     for (const pattern of openingPatterns) {
@@ -579,6 +584,9 @@ async function parsePDF(fileData: Blob): Promise<{ transactions: any[], currency
     // Patterns for closing balance (search in last 3000 chars)
     const footerSection = fullText.substring(Math.max(0, fullText.length - 3000));
     const closingPatterns = [
+      // Bank of America specific patterns
+      /ending\s*balance\s*on\s*\w+\s*\d+[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
+      /new\s*balance[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
       // With currency symbols
       /(?:closing|ending|current|new|final)\s*balance[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,
       /balance\s*(?:as\s*of|on)[:\s]*[\d\/\-]+[:\s]*[\$₹£€]?\s*([\d,]+\.?\d{0,2})/i,

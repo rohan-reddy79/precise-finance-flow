@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, AlertCircle } from "lucide-react";
-
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Loader2, AlertCircle, Info } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useProjectCurrency } from "@/hooks/useProjectCurrency";
+import { AddBalanceDialog } from "./AddBalanceDialog";
 
 interface SummaryTabProps {
   projectId: string;
@@ -23,6 +26,8 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
     closingBalance: null as number | null,
     earliestStatementDate: null as string | null,
   });
+  const [isSafeBalanceAccount, setIsSafeBalanceAccount] = useState(false);
+  const [balanceDialogOpen, setBalanceDialogOpen] = useState(false);
 
   useEffect(() => {
     loadSummary();
@@ -42,6 +47,12 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
       }
 
       const statementIds = statements.map(s => s.id);
+
+      // Check if this is a SafeBalance account
+      const hasSafeBalance = statements.some(s => 
+        s.file_name?.toLowerCase().includes('safebalance')
+      );
+      setIsSafeBalanceAccount(hasSafeBalance);
 
       // Fetch all transactions
       const { data: transactions } = await supabase
@@ -110,24 +121,52 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
     );
   }
 
+  const hasBalanceData = summary.openingBalance !== null;
+
   return (
     <div className="space-y-6">
+      <AddBalanceDialog 
+        projectId={projectId}
+        open={balanceDialogOpen}
+        onOpenChange={setBalanceDialogOpen}
+        onSuccess={loadSummary}
+      />
+      
       <h2 className="text-2xl font-bold">Financial Summary</h2>
       
       {/* Initial Balance Card - Always Show */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card className={summary.openingBalance === null ? "border-2 border-amber-500/30" : ""}>
+        <Card className={hasBalanceData ? "" : "border-2 border-amber-500/30"}>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
-              {summary.openingBalance === null && <AlertCircle className="h-4 w-4 text-amber-500" />}
-              Initial Balance
+            <CardTitle className="text-sm text-muted-foreground flex items-center gap-2 justify-between">
+              <div className="flex items-center gap-2">
+                {!hasBalanceData && <AlertCircle className="h-4 w-4 text-amber-500" />}
+                <span>Initial Balance</span>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="h-3 w-3 text-muted-foreground cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs">
+                      <p className="text-sm">
+                        Balance tracking depends on your bank's statement format. {isSafeBalanceAccount && "Bank of America SafeBalance accounts don't include balance information in PDFs. "}You can manually add balances for accurate tracking.
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+              {hasBalanceData && (
+                <Badge variant="secondary" className="bg-green-50 text-green-700 border-green-200 text-xs">
+                  Auto-extracted
+                </Badge>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {summary.openingBalance !== null ? (
+            {hasBalanceData ? (
               <>
                 <p className="text-2xl font-bold text-blue-600">
-                  {currencySymbol}{summary.openingBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  {currencySymbol}{summary.openingBalance!.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
                   As of {summary.earliestStatementDate ? new Date(summary.earliestStatementDate).toLocaleDateString() : summary.startDate}
@@ -135,10 +174,24 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
               </>
             ) : (
               <div className="space-y-2">
-                <p className="text-lg font-semibold text-amber-600">Balance data not extracted</p>
-                <p className="text-xs text-muted-foreground">
-                  Our parser couldn't find opening/closing balance fields in your bank's PDF format. This doesn't affect transaction tracking—all credits and debits are captured correctly.
+                <p className="text-sm font-semibold text-amber-600">
+                  {isSafeBalanceAccount 
+                    ? "Bank of America SafeBalance Account"
+                    : "Balance Data Not Available"}
                 </p>
+                <p className="text-xs text-muted-foreground">
+                  {isSafeBalanceAccount 
+                    ? "Your Bank of America SafeBalance account statements don't include balance information. This is normal for this account type. All transaction amounts are accurately tracked."
+                    : "Our parser couldn't find opening/closing balance fields in your bank's PDF format. This doesn't affect transaction tracking—all credits and debits are captured correctly."}
+                </p>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => setBalanceDialogOpen(true)}
+                  className="mt-2 h-8 text-xs"
+                >
+                  Add Balance Manually
+                </Button>
               </div>
             )}
           </CardContent>
@@ -147,7 +200,12 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
         {summary.closingBalance !== null && (
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-muted-foreground">Closing Balance</CardTitle>
+              <CardTitle className="text-sm text-muted-foreground flex items-center gap-2 justify-between">
+                <span>Closing Balance</span>
+                <Badge variant="secondary" className="bg-green-50 text-green-700 border-green-200 text-xs">
+                  Auto-extracted
+                </Badge>
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-2xl font-bold text-blue-600">
