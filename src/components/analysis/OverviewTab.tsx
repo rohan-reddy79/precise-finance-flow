@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2 } from "lucide-react";
+import { Loader2, AlertCircle } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
 
 interface OverviewTabProps {
@@ -14,6 +14,11 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
   const [monthlyData, setMonthlyData] = useState<any[]>([]);
   const [topCounterparties, setTopCounterparties] = useState<{ credit: any[], debit: any[] }>({ credit: [], debit: [] });
   const [currency, setCurrency] = useState<string>('USD');
+  const [balanceInfo, setBalanceInfo] = useState<{
+    openingBalance: number | null;
+    closingBalance: number | null;
+    earliestStatementDate: string | null;
+  }>({ openingBalance: null, closingBalance: null, earliestStatementDate: null });
   const currencySymbol = currency === 'INR' ? '₹' : currency === 'GBP' ? '£' : currency === 'EUR' ? '€' : '$';
 
   useEffect(() => {
@@ -35,6 +40,27 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
 
       const statementIds = statements.map(s => s.id);
       setCurrency(statements[0]?.currency || 'USD');
+
+      // Extract balance information
+      const earliestStatement = statements
+        .filter(s => s.statement_period_start)
+        .sort((a, b) => 
+          new Date(a.statement_period_start!).getTime() - 
+          new Date(b.statement_period_start!).getTime()
+        )[0];
+
+      const latestStatement = statements
+        .filter(s => s.closing_balance !== null)
+        .sort((a, b) => 
+          new Date(b.statement_period_start!).getTime() - 
+          new Date(a.statement_period_start!).getTime()
+        )[0];
+
+      setBalanceInfo({
+        openingBalance: earliestStatement?.opening_balance || null,
+        closingBalance: latestStatement?.closing_balance || null,
+        earliestStatementDate: earliestStatement?.statement_period_start || null,
+      });
 
       // Fetch all transactions
       const { data: transactions } = await supabase
@@ -134,6 +160,49 @@ const OverviewTab = ({ projectId }: OverviewTabProps) => {
 
   return (
     <div className="space-y-6">
+      {/* Initial Balance Card - Always Visible */}
+      <Card className="border-2 border-primary/20">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-lg flex items-center gap-2">
+            {balanceInfo.openingBalance !== null ? (
+              <>Initial Balance</>
+            ) : (
+              <>
+                <AlertCircle className="h-5 w-5 text-amber-500" />
+                Initial Balance - Not Available
+              </>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {balanceInfo.openingBalance !== null ? (
+            <>
+              <p className="text-3xl font-bold text-primary">
+                {currencySymbol}{balanceInfo.openingBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </p>
+              <p className="text-sm text-muted-foreground mt-2">
+                As of {balanceInfo.earliestStatementDate ? new Date(balanceInfo.earliestStatementDate).toLocaleDateString() : 'statement start'}
+              </p>
+              {balanceInfo.closingBalance !== null && (
+                <p className="text-sm text-muted-foreground mt-1">
+                  Closing: {currencySymbol}{balanceInfo.closingBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </p>
+              )}
+            </>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-lg font-semibold text-muted-foreground">Balance data not extracted from your statements</p>
+              <p className="text-sm text-muted-foreground">
+                Our parser couldn't find opening/closing balance fields in your bank's PDF format. This doesn't affect transaction tracking—all credits and debits are captured correctly.
+              </p>
+              <p className="text-xs text-muted-foreground italic mt-2">
+                Note: If you need balance tracking, consider the first transaction date as your reference point.
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="pb-2">

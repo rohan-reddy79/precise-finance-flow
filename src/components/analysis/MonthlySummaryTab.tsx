@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2 } from "lucide-react";
+import { Loader2, AlertCircle, CheckCircle } from "lucide-react";
 import { useProjectCurrency } from "@/hooks/useProjectCurrency";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from "recharts";
 
@@ -25,6 +25,7 @@ const MonthlySummaryTab = ({ projectId }: MonthlySummaryTabProps) => {
   const { currencySymbol } = useProjectCurrency(projectId);
   const [loading, setLoading] = useState(true);
   const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
+  const [hasBalanceData, setHasBalanceData] = useState(false);
 
   useEffect(() => {
     loadMonthlyData();
@@ -98,7 +99,8 @@ const MonthlySummaryTab = ({ projectId }: MonthlySummaryTabProps) => {
         }
       });
 
-      // Add balance information from statements
+      // Add balance information from statements and check if any balance data exists
+      let hasAnyBalance = false;
       statements.forEach((stmt) => {
         if (stmt.statement_period_start) {
           const date = new Date(stmt.statement_period_start);
@@ -107,9 +109,11 @@ const MonthlySummaryTab = ({ projectId }: MonthlySummaryTabProps) => {
             const monthData = monthlyMap.get(monthKey)!;
             if (stmt.opening_balance !== null) {
               monthData.openingBalance = parseFloat(stmt.opening_balance.toString());
+              hasAnyBalance = true;
             }
             if (stmt.closing_balance !== null) {
               monthData.closingBalance = parseFloat(stmt.closing_balance.toString());
+              hasAnyBalance = true;
             }
           }
         }
@@ -117,6 +121,7 @@ const MonthlySummaryTab = ({ projectId }: MonthlySummaryTabProps) => {
 
       const sortedData = Array.from(monthlyMap.values()).sort((a, b) => a.sortKey - b.sortKey);
 
+      setHasBalanceData(hasAnyBalance);
       setMonthlyData(sortedData);
       setLoading(false);
     } catch (error) {
@@ -135,7 +140,22 @@ const MonthlySummaryTab = ({ projectId }: MonthlySummaryTabProps) => {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">Monthly Summary (July 2024 - June 2025)</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold">Monthly Summary (July 2024 - June 2025)</h2>
+        <div className={`flex items-center gap-2 text-sm px-3 py-1 rounded-md ${hasBalanceData ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+          {hasBalanceData ? (
+            <>
+              <CheckCircle className="h-4 w-4" />
+              Balance data available
+            </>
+          ) : (
+            <>
+              <AlertCircle className="h-4 w-4" />
+              Balance data unavailable
+            </>
+          )}
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
