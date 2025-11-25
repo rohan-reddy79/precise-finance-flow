@@ -185,7 +185,6 @@ const SummaryTab = ({ projectId }: SummaryTabProps) => {
                   variant="ghost" 
                   size="sm"
                   onClick={() => {
-                    setEditStatementId(editStatementId);
                     setBalanceDialogOpen(true);
                   }}
                   className="mt-2 h-7 text-xs text-muted-foreground hover:text-foreground"
