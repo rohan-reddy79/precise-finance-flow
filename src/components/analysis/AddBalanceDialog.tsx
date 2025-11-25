@@ -13,6 +13,7 @@ interface AddBalanceDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
+  editStatementId?: string | null;
 }
 
 interface Statement {
@@ -22,7 +23,7 @@ interface Statement {
   statement_period_end: string | null;
 }
 
-export const AddBalanceDialog = ({ projectId, open, onOpenChange, onSuccess }: AddBalanceDialogProps) => {
+export const AddBalanceDialog = ({ projectId, open, onOpenChange, onSuccess, editStatementId }: AddBalanceDialogProps) => {
   const [statements, setStatements] = useState<Statement[]>([]);
   const [selectedStatementId, setSelectedStatementId] = useState<string>("");
   const [openingBalance, setOpeningBalance] = useState<string>("");
@@ -32,8 +33,12 @@ export const AddBalanceDialog = ({ projectId, open, onOpenChange, onSuccess }: A
   useEffect(() => {
     if (open) {
       loadStatements();
+      if (editStatementId) {
+        setSelectedStatementId(editStatementId);
+        loadExistingBalances(editStatementId);
+      }
     }
-  }, [open, projectId]);
+  }, [open, projectId, editStatementId]);
 
   const loadStatements = async () => {
     const { data, error } = await supabase
@@ -44,6 +49,19 @@ export const AddBalanceDialog = ({ projectId, open, onOpenChange, onSuccess }: A
 
     if (!error && data) {
       setStatements(data);
+    }
+  };
+
+  const loadExistingBalances = async (statementId: string) => {
+    const { data, error } = await supabase
+      .from("bank_statements")
+      .select("opening_balance, closing_balance")
+      .eq("id", statementId)
+      .maybeSingle();
+
+    if (!error && data) {
+      setOpeningBalance(data.opening_balance?.toString() || "");
+      setClosingBalance(data.closing_balance?.toString() || "");
     }
   };
 
@@ -81,7 +99,7 @@ export const AddBalanceDialog = ({ projectId, open, onOpenChange, onSuccess }: A
       return;
     }
 
-    toast.success("Balance data added successfully");
+    toast.success(editStatementId ? "Balance data updated successfully" : "Balance data added successfully");
     setSelectedStatementId("");
     setOpeningBalance("");
     setClosingBalance("");
@@ -95,12 +113,19 @@ export const AddBalanceDialog = ({ projectId, open, onOpenChange, onSuccess }: A
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
-          <DialogTitle>Add Balance Data Manually</DialogTitle>
+          <DialogTitle>{editStatementId ? "Edit Balance Data" : "Add Balance Data Manually"}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="statement">Select Statement</Label>
-            <Select value={selectedStatementId} onValueChange={setSelectedStatementId}>
+            <Select 
+              value={selectedStatementId} 
+              onValueChange={(value) => {
+                setSelectedStatementId(value);
+                loadExistingBalances(value);
+              }}
+              disabled={!!editStatementId}
+            >
               <SelectTrigger id="statement">
                 <SelectValue placeholder="Choose a statement" />
               </SelectTrigger>
